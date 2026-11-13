@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 500" width="1024" height="500">
+  <rect width="1024" height="500" fill="#0B6E6B"/>
+  <path fill="#12908B" opacity="0.55" d="M0 380C128 330 256 330 384 380C512 430 640 430 768 380C853 347 939 336 1024 347V500H0z"/>
+  <path fill="#5CCFC9" opacity="0.28" d="M0 430C128 395 256 395 384 430C512 465 640 465 768 430C853 407 939 399 1024 407V500H0z"/>
+  <g transform="translate(70 62) scale(4.7) translate(-34 -28)">
+    <path fill="#FFFFFF" d="M38 28H64L74 38V76a4 4 0 0 1-4 4H38a4 4 0 0 1-4-4V32a4 4 0 0 1 4-4z"/>
+    <path fill="#9FE8E3" d="M64 28V35a3 3 0 0 0 3 3H74z"/>
+    <path fill="#5CCFC9" d="M34 62C40.7 56.5 47.3 56.5 54 62C60.7 67.5 67.3 67.5 74 62V76a4 4 0 0 1-4 4H38a4 4 0 0 1-4-4z"/>
+    <path fill="#12908B" d="M34 70.5C40.7 66 47.3 66 54 70.5C60.7 75 67.3 75 74 70.5V76a4 4 0 0 1-4 4H38a4 4 0 0 1-4-4z"/>
+  </g>
+  <text x="330" y="215" font-family="Avenir Next, Helvetica, Arial, sans-serif" font-weight="600" font-size="104" fill="#FFFFFF">Tidepage</text>
+  <text x="334" y="282" font-family="Avenir Next, Helvetica, Arial, sans-serif" font-size="38" fill="#9FE8E3">Your PDFs stay on your phone.</text>
+  <text x="334" y="332" font-family="Avenir Next, Helvetica, Arial, sans-serif" font-size="30" fill="#FFFFFF" opacity="0.9">No internet · No ads · No account</text>
+</svg>
