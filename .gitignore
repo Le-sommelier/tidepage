@@ -12,3 +12,4 @@ rust/pdfa-ffi/golden/*.diff.ppm
 *.jks
 *.keystore
 keystore.properties
+.DS_Store
