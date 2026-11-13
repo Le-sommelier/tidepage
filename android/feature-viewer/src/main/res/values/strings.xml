@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="viewer_opening">Opening…</string>
+    <string name="viewer_page_description">Page %1$d of %2$d</string>
+    <string name="viewer_next_page">Next page</string>
+    <string name="viewer_previous_page">Previous page</string>
+    <string name="viewer_scroll_position">Scroll position</string>
+    <string name="viewer_safe_mode">The engine restarted. Your document is safe.</string>
+    <string name="viewer_dismiss">Dismiss</string>
+    <string name="viewer_password_title">This file is protected. Enter its password.</string>
+    <string name="viewer_password_label">Password</string>
+    <string name="viewer_password_wrong">Wrong password. Try again. %1$d left.</string>
+    <string name="viewer_password_open">Open</string>
+    <string name="viewer_cancel">Cancel</string>
+    <string name="viewer_locked_title">Too many wrong passwords</string>
+    <string name="viewer_locked_body">Close this file and open it again to try another password.</string>
+    <string name="viewer_corrupted_title">This PDF looks damaged</string>
+    <string name="viewer_corrupted_body">It could not be opened. The original file was not changed.</string>
+    <string name="viewer_toolarge_title">This file is too large</string>
+    <string name="viewer_toolarge_body">It is bigger than this app can open on this device.</string>
+    <string name="viewer_failed_title">The file could not be opened</string>
+    <string name="viewer_failed_body">Something went wrong while opening it. Your file is safe.</string>
+    <string name="viewer_back">Back</string>
+    <string name="viewer_try_again">Try again</string>
+    <string name="viewer_tile_error">Part of this page could not be drawn</string>
+</resources>

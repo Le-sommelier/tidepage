@@ -1,0 +1,9 @@
+Tidepage
+Copyright 2026 the Tidepage authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes software developed by the pdfcraft project
+(https://github.com/storytold/pdfcraft), used under the MIT OR Apache-2.0
+licence. It is fetched at build time into third_party/ and is not
+redistributed in this repository.

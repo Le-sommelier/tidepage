@@ -1,0 +1,41 @@
+[versions]
+agp = "8.9.1"
+kotlin = "1.9.25"
+compose-compiler = "1.5.15"
+compose-bom = "2024.06.00"
+coroutines = "1.8.1"
+# 5.17+ : libjnidispatch.so has a 16 KB-aligned RELRO segment (16 KB page-size devices; Android 17 checks it).
+jna = "5.18.1"
+junit = "4.13.2"
+compile-sdk = "36"
+min-sdk = "26"
+target-sdk = "36"
+jdk = "21"
+
+[libraries]
+# Build-logic only (compileOnly). The versions here are what the convention plugins use.
+android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+# JNA ships as an AAR for Android. Version catalogs cannot express the @aar packaging, so consumers write:
+#   implementation("${libs.jna.get()}@aar")
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

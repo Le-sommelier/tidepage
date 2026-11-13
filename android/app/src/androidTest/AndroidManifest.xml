@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Test APK only. Serves the generated PDF fixtures as content:// URIs, so MainActivity is started
+  with a real VIEW intent. Nothing here reaches the app's own manifest.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider
+            android:name="app.pdfa.app.TestPdfProvider"
+            android:authorities="app.pdfa.test.pdfs"
+            android:exported="true" />
+    </application>
+</manifest>

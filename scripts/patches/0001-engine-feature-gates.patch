@@ -1,0 +1,2106 @@
+diff --git a/crates/engine/Cargo.toml b/crates/engine/Cargo.toml
+index f5b924c9..e83f213e 100644
+--- a/crates/engine/Cargo.toml
++++ b/crates/engine/Cargo.toml
+@@ -8,6 +8,19 @@ license.workspace = true
+ [lints]
+ workspace = true
+ 
++[features]
++# Each feature is on by default, so upstream behaviour is unchanged. Turn them off with
++# `default-features = false` to drop the code (and its dependencies) from small builds.
++default = ["sign", "ocr", "print", "js"]
++# Digital signatures: signing, verification, timestamps, LTV, signature appearances.
++sign = ["dep:pdfcraft-sign"]
++# Text recognition (ocrs/rten models, tesseract bridge) and the invisible text layer.
++ocr = ["dep:pdfcraft-ocr"]
++# Print imposition (n-up, booklet) and print rasterising.
++print = ["dep:pdfcraft-print"]
++# Document JavaScript (boa): field scripts and XFA scripting.
++js = ["dep:pdfcraft-js"]
++
+ [dependencies]
+ craft-docpath = { workspace = true }
+ pdfcraft-measure = { workspace = true }
+@@ -22,13 +35,13 @@ pdfcraft-edit = { workspace = true }
+ pdfcraft-content = { workspace = true }
+ pdfcraft-audit = { workspace = true }
+ pdfcraft-redact = { workspace = true }
+-pdfcraft-print = { workspace = true }
++pdfcraft-print = { workspace = true, optional = true }
+ pdfcraft-xfdf = { workspace = true }
+-pdfcraft-sign = { workspace = true }
++pdfcraft-sign = { workspace = true, optional = true }
+ pdfcraft-optimize = { workspace = true }
+ pdfcraft-a11y = { workspace = true }
+-pdfcraft-ocr = { workspace = true }
+-pdfcraft-js = { workspace = true }
++pdfcraft-ocr = { workspace = true, optional = true }
++pdfcraft-js = { workspace = true, optional = true }
+ pdfcraft-compare = { workspace = true }
+ pdfcraft-preflight = { workspace = true }
+ pdfcraft-export = { workspace = true }
+diff --git a/crates/engine/src/actions.rs b/crates/engine/src/actions.rs
+index 249279e0..3d3f6fb3 100644
+--- a/crates/engine/src/actions.rs
++++ b/crates/engine/src/actions.rs
+@@ -155,6 +155,9 @@ fn apply_step(s: &mut Session, id: DocId, step: &Step, log: &mut Vec<String>) ->
+     let pages = s.get(id).map_or(0, |d| d.info.pages.len());
+     let all: Vec<usize> = (0..pages).collect();
+     let edit = match step {
++        #[cfg(not(feature = "ocr"))]
++        Step::RecognizeText => return Err(EditError::Invalid("text recognition is not built into this version".into())),
++        #[cfg(feature = "ocr")]
+         Step::RecognizeText => {
+             let found = s.recognize_text(id, &[], crate::ocr::OcrSettings::default()).map_err(EditError::Invalid)?;
+             log.push(format!("Recognize text: {} words", found.iter().map(|p| p.words.len()).sum::<usize>()));
+@@ -188,6 +191,9 @@ fn apply_step(s: &mut Session, id: DocId, step: &Step, log: &mut Vec<String>) ->
+             log.push(format!("Detect form fields: {n}"));
+             return Ok(None);
+         }
++        #[cfg(not(feature = "js"))]
++        Step::RunJavaScript(_) => return Err(EditError::Invalid("JavaScript is not built into this version".into())),
++        #[cfg(feature = "js")]
+         Step::RunJavaScript(js) => {
+             let o = s.run_javascript(id, js, None)?;
+             log.push(match o.error {
+diff --git a/crates/engine/src/dates.rs b/crates/engine/src/dates.rs
+index 5ede67c8..6d6d92c5 100644
+--- a/crates/engine/src/dates.rs
++++ b/crates/engine/src/dates.rs
+@@ -590,6 +590,7 @@ pub fn use_form_date_language(code: &str) {
+     let names = pdfcraft_forms::af::DateNames { months: l.months, months_short: l.months_short, days: l.days, days_short: l.days_short };
+     if pdfcraft_forms::af::date_names() != names {
+         pdfcraft_forms::af::set_date_names(names);
++        #[cfg(feature = "js")]
+         pdfcraft_js::set_date_names(l.months, l.months_short, l.days, l.days_short);
+     }
+ }
+diff --git a/crates/engine/src/doc_state.rs b/crates/engine/src/doc_state.rs
+index f9c70150..63540b00 100644
+--- a/crates/engine/src/doc_state.rs
++++ b/crates/engine/src/doc_state.rs
+@@ -48,6 +48,7 @@ pub struct DocId(pub u64);
+ 
+ /// The highest resolution a document that allows only low-resolution printing (Table 22, bit 12
+ /// clear) is printed at.
++#[cfg(feature = "print")]
+ pub(crate) const LOW_RESOLUTION_PRINT_DPI: f64 = 150.0;
+ 
+ pub(crate) fn render_threads() -> usize {
+@@ -111,9 +112,9 @@ pub(crate) fn signatures_of(
+     cos: &pdfcraft_cos::Document,
+     bytes: &[u8],
+     trust: &TrustStore,
+-    cache: &pdfcraft_sign::DigestCache,
++    cache: &crate::sign_api::DigestCache,
+ ) -> Vec<SignatureInfo> {
+-    pdfcraft_sign::pdf::list_cached(cos, bytes, trust, cache)
++    crate::sign_api::pdf::list_cached(cos, bytes, trust, cache)
+ }
+ 
+ /// What Optimize PDF did.
+diff --git a/crates/engine/src/document.rs b/crates/engine/src/document.rs
+index 22667377..e14979e9 100644
+--- a/crates/engine/src/document.rs
++++ b/crates/engine/src/document.rs
+@@ -46,7 +46,7 @@ pub struct Document {
+     /// The words signature status layers are drawn with (the session's, see
+     /// [`Session::set_signature_captions`](crate::Session::set_signature_captions)).
+     pub(crate) captions: Arc<StatusCaptions>,
+-    pub(crate) sig_cache: Arc<pdfcraft_sign::DigestCache>,
++    pub(crate) sig_cache: Arc<crate::sign_api::DigestCache>,
+     pub(crate) editor: Option<Editor>,
+     pub(crate) config: RenderConfig,
+     /// What field scripts printed or asked for (see [`Session::take_js_output`]).
+@@ -688,16 +688,16 @@ pub(crate) fn display_bytes(
+     let fields = pdfcraft_forms::with_field_appearances_cached(comments.as_ref().unwrap_or(&e.cos), &mut e.field_appearances);
+     if let Some(mut display) = fields.or(comments) {
+         // Written whether or not a signature changed: the copy exists for the comments and fields.
+-        let _ = pdfcraft_sign::show_status_layers(&mut display, signatures, captions);
++        let _ = crate::sign_api::show_status_layers(&mut display, signatures, captions);
+         return write_display_copy(e, bytes, &display, signatures);
+     }
+     // No comment or field needed an appearance, so there is no copy yet: build one only when a
+     // signature's state would change it.
+-    if !pdfcraft_sign::has_status_layers(&e.cos, signatures) {
++    if !crate::sign_api::has_status_layers(&e.cos, signatures) {
+         return bytes.clone();
+     }
+     let mut display = e.cos.clone();
+-    if !pdfcraft_sign::show_status_layers(&mut display, signatures, captions) {
++    if !crate::sign_api::show_status_layers(&mut display, signatures, captions) {
+         return bytes.clone();
+     }
+     write_display_copy(e, bytes, &display, signatures)
+@@ -776,15 +776,15 @@ pub(crate) fn info_fields<'a>(info: &'a mut DocInfo, cos: &pdfcraft_cos::Documen
+ pub fn display_bytes_for(bytes: Arc<Vec<u8>>, password: Option<&str>) -> Arc<Vec<u8>> {
+     guard(|| {
+         let cos = pdfcraft_cos::Document::open_with_password(bytes.clone(), password).ok()?;
+-        let mut signatures = signatures_of(&cos, &bytes, &TrustStore::default(), &pdfcraft_sign::DigestCache::default());
+-        let layered = pdfcraft_sign::has_status_layers(&cos, &signatures);
++        let mut signatures = signatures_of(&cos, &bytes, &TrustStore::default(), &crate::sign_api::DigestCache::default());
++        let layered = crate::sign_api::has_status_layers(&cos, &signatures);
+         let (mut display, added) = match with_field_appearances(pdfcraft_annot::with_missing_appearances(&cos), &cos) {
+             Some(display) => (display, true),
+             None if layered => (cos, false),
+             None => return None,
+         };
+         // As in the app, a layer recognised but not drawn after all makes no copy.
+-        let drawn = layered && pdfcraft_sign::show_status_layers(&mut display, &mut signatures, &StatusCaptions::default());
++        let drawn = layered && crate::sign_api::show_status_layers(&mut display, &mut signatures, &StatusCaptions::default());
+         if !(added || drawn) {
+             return None;
+         }
+diff --git a/crates/engine/src/edit.rs b/crates/engine/src/edit.rs
+index 6ead3ca0..b7c861f5 100644
+--- a/crates/engine/src/edit.rs
++++ b/crates/engine/src/edit.rs
+@@ -426,6 +426,7 @@ pub enum Edit {
+     },
+     /// Scan & OCR ▸ Recognize text: put recognised words on `page` as invisible text over the
+     /// image (from [`ocr::OcrJob::run`](crate::ocr::OcrJob::run)).
++    #[cfg(feature = "ocr")]
+     AddOcrText {
+         page: usize,
+         words: Vec<pdfcraft_ocr::PlacedWord>,
+diff --git a/crates/engine/src/edit/labels.rs b/crates/engine/src/edit/labels.rs
+index 762e8ced..7908b56f 100644
+--- a/crates/engine/src/edit/labels.rs
++++ b/crates/engine/src/edit/labels.rs
+@@ -259,6 +259,7 @@ impl Edit {
+             Edit::MoveTag { .. } => Label::of("Move object"),
+             Edit::MarkDecorative { .. } => Label::of("Mark figure as decorative"),
+             Edit::MarkTagArtifact { .. } => Label::of("Mark content as artifact"),
++            #[cfg(feature = "ocr")]
+             Edit::AddOcrText { .. } => Label::of("Recognize text"),
+             Edit::EnhanceScan { .. } => Label::of("Enhance scanned file"),
+             Edit::ApplyScriptChanges { .. } => Label::of("Run JavaScript"),
+diff --git a/crates/engine/src/edit/run.rs b/crates/engine/src/edit/run.rs
+index 1d4a7993..548ca30c 100644
+--- a/crates/engine/src/edit/run.rs
++++ b/crates/engine/src/edit/run.rs
+@@ -143,7 +143,6 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
+         | Edit::MoveTag { .. }
+         | Edit::MarkDecorative { .. }
+         | Edit::MarkTagArtifact { .. }
+-        | Edit::AddOcrText { .. }
+         | Edit::EnhanceScan { .. }
+         | Edit::SetDocumentScript { .. }
+         | Edit::SetFieldScript { .. }
+@@ -161,6 +160,14 @@ pub(crate) fn check_permission(edit: &Edit, p: &pdfcraft_cos::Permissions) -> Re
+                 Err(EditError::NotPermitted("changes to the document"))
+             }
+         }
++        #[cfg(feature = "ocr")]
++        Edit::AddOcrText { .. } => {
++            if p.modify() {
++                Ok(())
++            } else {
++                Err(EditError::NotPermitted("changes to the document"))
++            }
++        }
+         Edit::Batch { edits, .. } => edits.iter().try_for_each(|e| check_permission(e, p)),
+     }
+ }
+@@ -725,6 +732,7 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
+         }
+         Edit::RemoveStandardId { standard } => pdfcraft_organize::remove_standard_id(doc, *standard)?,
+         Edit::SetDocumentScript { name, script } => pdfcraft_forms::set_document_script(doc, name, script.as_deref())?,
++        #[cfg(feature = "ocr")]
+         Edit::AddOcrText { page, words } => {
+             crate::ocr::layer::add_text(doc, *page, words)?;
+         }
+diff --git a/crates/engine/src/error.rs b/crates/engine/src/error.rs
+index 5ee915fc..50e9ba13 100644
+--- a/crates/engine/src/error.rs
++++ b/crates/engine/src/error.rs
+@@ -73,6 +73,7 @@ pub enum EditError {
+     Invalid(String),
+ }
+ 
++#[cfg(feature = "sign")]
+ impl From<pdfcraft_sign::SignError> for EditError {
+     fn from(e: pdfcraft_sign::SignError) -> Self {
+         EditError::Sign(e.to_string())
+diff --git a/crates/engine/src/fill_sign.rs b/crates/engine/src/fill_sign.rs
+index 1bd8c68d..f925f52c 100644
+--- a/crates/engine/src/fill_sign.rs
++++ b/crates/engine/src/fill_sign.rs
+@@ -41,6 +41,7 @@ pub fn text_box_at(rotation: i64, at: [f64; 2], width: f64, height: f64) -> Opti
+ 
+ /// `text` in the script font as the graphic of a visible digital signature, as Fill & Sign types
+ /// it. `None` for text with no outlines.
++#[cfg(feature = "sign")]
+ pub fn typed_signature_graphic(text: &str) -> Option<pdfcraft_sign::Graphic> {
+     let o = script_outline(text);
+     o.contours.iter().any(|c| c.len() > 2).then_some(pdfcraft_sign::Graphic::Outlines(o.contours))
+diff --git a/crates/engine/src/js.rs b/crates/engine/src/js.rs
+index f5815042..46c2b689 100644
+--- a/crates/engine/src/js.rs
++++ b/crates/engine/src/js.rs
+@@ -6,11 +6,15 @@
+ //! Preferences ▸ JavaScript ▸ Enable Acrobat JavaScript is [`Session::set_javascript`]; with it
+ //! off, scripts don't run and AF calls keep working natively.
+ 
+-use pdfcraft_forms::{Field, FieldChange, FieldEvent, FieldKind, FieldProps, ScriptResult, Scripts};
++use pdfcraft_forms::{Field, FieldEvent, FieldProps, ScriptResult, Scripts};
++#[cfg(feature = "js")]
++use pdfcraft_forms::{FieldChange, FieldKind};
++#[cfg(feature = "js")]
+ pub use pdfcraft_js::{Limits, Message, MessageButtons, MessageIcon, Outcome, Panel, Request};
+ 
+ use crate::{DocId, Edit, EditError, Session};
+ 
++#[cfg(feature = "js")]
+ /// What scripts produced for the viewer since it last looked.
+ #[derive(Clone, Debug, Default, PartialEq)]
+ pub struct JsOutput {
+@@ -26,6 +30,7 @@ pub struct JsOutput {
+     pub doc_errors: Vec<String>,
+ }
+ 
++#[cfg(feature = "js")]
+ impl JsOutput {
+     /// Whether scripts produced nothing: no alerts, console lines, requests or errors.
+     pub fn is_empty(&self) -> bool {
+@@ -80,6 +85,52 @@ impl JsOutput {
+     }
+ }
+ 
++/// What scripts produced for the viewer. Without the `js` feature no script runs, so it is always
++/// empty.
++#[cfg(not(feature = "js"))]
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct JsOutput {
++    pub console: Vec<String>,
++    pub errors: Vec<String>,
++}
++
++#[cfg(not(feature = "js"))]
++impl JsOutput {
++    pub fn is_empty(&self) -> bool {
++        self.console.is_empty() && self.errors.is_empty()
++    }
++
++    pub(crate) fn append(&mut self, other: JsOutput) {
++        self.console.extend(other.console);
++        self.errors.extend(other.errors);
++    }
++}
++
++/// The runner field scripts run through, if scripts can run at all.
++#[cfg(feature = "js")]
++pub(crate) fn runner_for(cos: &pdfcraft_cos::Document, file_name: &str) -> Option<JsRunner> {
++    Some(JsRunner::new(cos, file_name))
++}
++
++#[cfg(not(feature = "js"))]
++pub(crate) fn runner_for(_cos: &pdfcraft_cos::Document, _file_name: &str) -> Option<JsRunner> {
++    None
++}
++
++/// Stands for the script runner when the `js` feature is off; never constructed.
++#[cfg(not(feature = "js"))]
++pub struct JsRunner {
++    pub output: JsOutput,
++}
++
++#[cfg(not(feature = "js"))]
++impl Scripts for JsRunner {
++    fn run(&mut self, _event: FieldEvent, _script: &str, _target: &Field, value: &str, _fields: &[Field]) -> ScriptResult {
++        ScriptResult { rc: true, value: value.to_string(), changes: Vec::new(), message: None }
++    }
++}
++
++#[cfg(feature = "js")]
+ fn kind(k: FieldKind) -> pdfcraft_js::FieldType {
+     use pdfcraft_js::FieldType as T;
+     match k {
+@@ -93,6 +144,7 @@ fn kind(k: FieldKind) -> pdfcraft_js::FieldType {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// `field.display` from the first widget's annotation flags.
+ fn display(doc: &pdfcraft_cos::Document, f: &Field) -> i32 {
+     let flags = f.widgets.first().and_then(|w| doc.get(w.obj).as_dict().and_then(|d| d.int(b"F"))).unwrap_or(4);
+@@ -107,11 +159,13 @@ fn display(doc: &pdfcraft_cos::Document, f: &Field) -> i32 {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// A form field as scripts see it.
+ pub fn field_state(doc: &pdfcraft_cos::Document, f: &Field) -> pdfcraft_js::FieldState {
+     field_state_with_display(f, display(doc, f))
+ }
+ 
++#[cfg(feature = "js")]
+ fn field_state_with_display(f: &Field, display: i32) -> pdfcraft_js::FieldState {
+     let mut s = pdfcraft_js::FieldState::new(f.name.clone(), kind(f.kind), f.value.clone());
+     s.default = f.default.clone();
+@@ -126,6 +180,7 @@ fn field_state_with_display(f: &Field, display: i32) -> pdfcraft_js::FieldState
+     s
+ }
+ 
++#[cfg(feature = "js")]
+ /// The changes a script made, against the fields as they were.
+ fn changes(before: &[pdfcraft_js::FieldState], after: &[pdfcraft_js::FieldState]) -> Vec<FieldChange> {
+     if after.is_empty() {
+@@ -153,6 +208,7 @@ fn changes(before: &[pdfcraft_js::FieldState], after: &[pdfcraft_js::FieldState]
+         .collect()
+ }
+ 
++#[cfg(feature = "js")]
+ /// Runs field scripts with the document's object model and keeps what they print or ask for.
+ pub struct JsRunner {
+     pub doc: pdfcraft_js::DocInfo,
+@@ -167,6 +223,7 @@ pub struct JsRunner {
+     displays: std::collections::HashMap<pdfcraft_cos::ObjRef, i32>,
+ }
+ 
++#[cfg(feature = "js")]
+ impl JsRunner {
+     /// A runner for `cos`: what scripts read about the document (pages, info, whether it is
+     /// an XFA form) and its document-level scripts, read once.
+@@ -184,6 +241,7 @@ impl JsRunner {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// The Info dictionary as `this.info` keys (lower-case).
+ fn info(cos: &pdfcraft_cos::Document) -> Vec<(String, String)> {
+     let Some(d) = cos.trailer().get(b"Info").map(|i| cos.resolve(i)).and_then(|i| i.as_dict().cloned()) else { return Vec::new() };
+@@ -195,6 +253,7 @@ fn info(cos: &pdfcraft_cos::Document) -> Vec<(String, String)> {
+         .collect()
+ }
+ 
++#[cfg(feature = "js")]
+ impl Scripts for JsRunner {
+     /// Run field `target`'s script for `event` over the form's fields, keeping what it showed and
+     /// asked for; a refusal carries its last message.
+@@ -213,6 +272,7 @@ impl Scripts for JsRunner {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ impl JsRunner {
+     /// [`Scripts::run`], keeping what the script showed and asked for only when `log`; `None`
+     /// when the script failed.
+@@ -274,7 +334,7 @@ impl Session {
+     }
+ 
+     pub fn javascript(&self) -> bool {
+-        !self.js_off
++        cfg!(feature = "js") && !self.js_off
+     }
+ 
+     /// What scripts printed or asked for since the last call (alerts, console, print, …).
+@@ -282,6 +342,7 @@ impl Session {
+         self.docs.iter_mut().find(|d| d.id == id).map(|d| std::mem::take(&mut d.js_output)).unwrap_or_default()
+     }
+ 
++    #[cfg(feature = "js")]
+     /// Run `script` in document `id`, for a button (`target`: the field, event "Mouse Up") or
+     /// the console (no target). Field changes and `resetForm` are applied as one undoable step;
+     /// everything else the script asked for is returned.
+@@ -434,7 +495,7 @@ impl Session {
+             let (found, turn) = if shapes.boxes.is_empty() && shapes.rules.is_empty() && crate::scan_fields::is_scan(doc, page, info) {
+                 // Labels come from the page's own text. Words that only /ActualText names (a stamp
+                 // drawn as outlines) are no labels, and leave the scan to be read.
+-                let own = crate::ocr::own_text(&mut r, page).ok();
++                let own = r.filtered_text(page, pdfcraft_render::text::TextFilter { painted: true, ..Default::default() }).ok();
+                 self.detect_on_scan(id, &mut r, page, own.as_ref(), &existing, &taken)
+             } else {
+                 let res =
+@@ -488,7 +549,7 @@ impl Session {
+     }
+ }
+ 
+-#[cfg(test)]
++#[cfg(all(test, feature = "js"))]
+ mod review_tests {
+     use super::*;
+ 
+diff --git a/crates/engine/src/layers.rs b/crates/engine/src/layers.rs
+index f7596709..fdf0c05e 100644
+--- a/crates/engine/src/layers.rs
++++ b/crates/engine/src/layers.rs
+@@ -10,6 +10,7 @@ use crate::{Document, display_config, render_threads};
+ /// made for printing): `/BaseState /ON`, `/ON` the visible layers, `/OFF` the hidden ones. Its
+ /// other entries (`/Order`, `/RBGroups`, `/AS`…) are kept. A document without `/OCProperties`
+ /// is left alone.
++#[cfg(feature = "print")]
+ pub(crate) fn set_default_layer_state(cos: &mut pdfcraft_cos::Document, layers: &[Layer]) {
+     use pdfcraft_cos::{Dict, ObjRef, Object};
+     let Some(root_ref) = cos.trailer().get(b"Root").and_then(Object::as_ref) else { return };
+diff --git a/crates/engine/src/lib.rs b/crates/engine/src/lib.rs
+index baa06b02..e27d5274 100644
+--- a/crates/engine/src/lib.rs
++++ b/crates/engine/src/lib.rs
+@@ -37,11 +37,14 @@ mod layers;
+ pub mod links;
+ pub mod model3d;
+ mod object_clip;
++#[cfg(feature = "ocr")]
+ pub mod ocr;
+ mod open;
+ pub mod optimizer;
+ mod page_filter;
++mod page_range;
+ mod pictures;
++#[cfg(feature = "print")]
+ pub mod print_raster;
+ pub mod printcheck;
+ mod protection;
+@@ -125,6 +128,7 @@ pub use pdfcraft_annot::{MAX_MODEL_BYTES as MAX_3D_MODEL_BYTES, ModelFormat as M
+ pub use pdfcraft_forms::detect;
+ pub use pdfcraft_optimize as optimize;
+ pub use pdfcraft_preflight as pdfa;
++#[cfg(feature = "print")]
+ pub use pdfcraft_print as print;
+ pub use pdfcraft_redact::codes::{CODE_SETS as REDACTION_CODE_SETS, CodeSet as RedactionCodeSet};
+ pub use pdfcraft_redact::patterns::{
+@@ -132,8 +136,18 @@ pub use pdfcraft_redact::patterns::{
+ };
+ pub use pdfcraft_redact::sanitize::{HIDDEN, Hidden};
+ pub use pdfcraft_redact::user_regex::{UserRegex as RedactRegex, VALIDATORS as REDACT_VALIDATORS, Validator as RedactValidator};
++#[cfg(feature = "sign")]
+ pub use pdfcraft_sign as sign;
++#[cfg(feature = "sign")]
+ pub use pdfcraft_sign::{SignOptions, SignatureInfo, Status as SignatureStatus, StatusCaptions, TrustStore};
++#[cfg(feature = "sign")]
++use pdfcraft_sign as sign_api;
++#[cfg(not(feature = "sign"))]
++mod sign_off;
++#[cfg(not(feature = "sign"))]
++pub use sign_off::{SignatureInfo, Status as SignatureStatus, StatusCaptions, TrustStore};
++#[cfg(not(feature = "sign"))]
++use sign_off as sign_api;
+ pub use pdfcraft_xfdf::Format as DataFormat;
+ pub use pdfcraft_xfdf::{Outline as CommentOutline, comment_count, comment_outlines, comments_bounds, is_xfdf_comments};
+ 
+@@ -147,9 +161,13 @@ pub use document::{Document, EditNotice, TextNotice, display_bytes_for, render_p
+ use document::{carry_verdict_marks, display_bytes, info_fields, recovered_render_password, same_pages, shown_under_redactions, undrawn_notices};
+ pub use edit::{BATCH_LABELS, EDIT_LABELS, Edit};
+ pub use error::{EditError, SourceProblem};
+-pub use fill_sign::{displayed_offset, text_box_at, typed_signature_graphic, typed_signature_shape};
++pub use fill_sign::{displayed_offset, text_box_at, typed_signature_shape};
++#[cfg(feature = "sign")]
++pub use fill_sign::typed_signature_graphic;
+ pub use history::Label;
+-use layers::{apply_layer_state, set_default_layer_state, use_layer_choices};
++use layers::{apply_layer_state, use_layer_choices};
++#[cfg(feature = "print")]
++use layers::set_default_layer_state;
+ pub use open::{OpenContext, PreparedDocument};
+ pub use page_filter::{PageOrientation, PageParity, filter_pages};
+ pub use pictures::{MarkFile, image_dimensions};
+@@ -161,9 +179,11 @@ pub use sources::{CombineSource, Combined, combine_source_check, source_page_cou
+ use sources::{open_source, open_source_with};
+ #[cfg(test)]
+ use test_hooks::{check_refresh_panic, panic_on_refresh, record_link_scan, record_marker_scan, reset_secondary_scan_counts, secondary_scan_counts};
++#[cfg(feature = "js")]
++use xfa_form::undrawn_field_warnings;
+ use xfa_form::{
+     XFA_REMOVED_PREFIX, XFA_SCRIPTS_OFF, decode_data_file, image_content_type, is_xfa_data_file, note_warnings, strip_xfa, sync_xfa_state,
+-    undrawn_field_warnings, xfa_after_data_change, xfa_layout, xfa_redraw, xfa_sync_datasets, xfa_values_from_datasets,
++    xfa_after_data_change, xfa_layout, xfa_redraw, xfa_sync_datasets, xfa_values_from_datasets,
+ };
+ 
+ mod clock;
+@@ -173,7 +193,9 @@ pub use pdfcraft_edit::ArrangeOrder;
+ 
+ use clock::{local_utc_offset, parse_ymd};
+ pub use doc_state::{DocId, ImageEdit, OptimizeReport, RecoverySnapshot, SplitPart, guard, merge_data_files};
+-use doc_state::{LOW_RESOLUTION_PRINT_DPI, render_threads, renderer_password, signatures_of, writable};
++#[cfg(feature = "print")]
++use doc_state::LOW_RESOLUTION_PRINT_DPI;
++use doc_state::{render_threads, renderer_password, signatures_of, writable};
+ 
+ /// The configuration of the pool that draws the viewer: the document's own, plus installed CJK
+ /// fonts for fonts a PDF does not embed (`pdfcraft_render::RenderConfig::system_fonts`). Exports,
+diff --git a/crates/engine/src/open.rs b/crates/engine/src/open.rs
+index 80a5ad30..5e5276c1 100644
+--- a/crates/engine/src/open.rs
++++ b/crates/engine/src/open.rs
+@@ -247,7 +247,7 @@ impl Session {
+         let (bytes, info, cos) = match cos {
+             Ok(Ok(cos)) if !info.pages.is_empty() && pdfcraft_organize::page_count(&cos).unwrap_or(0) == 0 => {
+                 let mut work = cos.clone();
+-                let signed = || pdfcraft_sign::pdf::list(&cos, &bytes, &context.trust).iter().any(|s| s.signed);
++                let signed = || crate::sign_api::pdf::list(&cos, &bytes, &context.trust).iter().any(|s| s.signed);
+                 let rebuilt = match pdfcraft_organize::recover_page_tree(&mut work) {
+                     Ok(n) if n > 0 && !signed() => rebase(&work).ok().filter(|(_, i, _)| same_pages(&i.pages, &info.pages)),
+                     _ => None,
+@@ -307,7 +307,7 @@ impl Session {
+             Ok(Err(e)) => (None, Some(e.to_string())),
+             Err(_) => (None, Some("the document structure could not be read for editing".into())),
+         };
+-        let sig_cache = Arc::new(pdfcraft_sign::DigestCache::default());
++        let sig_cache = Arc::new(crate::sign_api::DigestCache::default());
+         let mut signatures = editor.as_ref().map(|e| signatures_of(&e.cos, &bytes, &context.trust, &sig_cache)).unwrap_or_default();
+         // The inspection reads only `/Info`; a file stating its title or author only in XMP still
+         // shows them (#2373).
+diff --git a/crates/engine/src/page_range.rs b/crates/engine/src/page_range.rs
+new file mode 100644
+index 00000000..84b1c4bc
+--- /dev/null
++++ b/crates/engine/src/page_range.rs
+@@ -0,0 +1,41 @@
++//! The pages a typed range ("1-3, 6, 9-") names, for merging and splitting files. With the `print`
++//! feature this is `pdfcraft_print::select_pages`; without it, the same grammar for plain numbers
++//! (no page labels, no odd/even subset), with the same wording for its errors.
++
++/// The 0-based pages `range` names in a document of `count` pages, in the order typed; a range
++/// written backwards (`5-2`) runs backwards.
++#[cfg(feature = "print")]
++pub(crate) fn select(count: usize, range: &str) -> Result<Vec<usize>, String> {
++    pdfcraft_print::select_pages(count, Some(range), &[], pdfcraft_print::Subset::All, false).map_err(|e| e.to_string())
++}
++
++#[cfg(not(feature = "print"))]
++pub(crate) fn select(count: usize, range: &str) -> Result<Vec<usize>, String> {
++    let page = |tok: &str| -> Result<usize, String> {
++        let t = tok.trim();
++        match t.parse::<usize>() {
++            Ok(n) if n >= 1 && n <= count => Ok(n - 1),
++            Ok(n) => Err(format!("page {n} is out of range (1–{count})")),
++            Err(_) => Err(format!("{t:?} is not a page number or label")),
++        }
++    };
++    let mut pages = Vec::new();
++    for part in range.split([',', ';']).map(str::trim).filter(|p| !p.is_empty()) {
++        match part.split_once('-') {
++            Some((a, b)) => {
++                let from = if a.trim().is_empty() { 0 } else { page(a)? };
++                let to = if b.trim().is_empty() { count.checked_sub(1).ok_or("there are no pages to print")? } else { page(b)? };
++                if from <= to {
++                    pages.extend(from..=to);
++                } else {
++                    pages.extend((to..=from).rev());
++                }
++            }
++            None => pages.push(page(part)?),
++        }
++    }
++    if pages.is_empty() {
++        return Err("there are no pages to print".into());
++    }
++    Ok(pages)
++}
+diff --git a/crates/engine/src/scan_fields.rs b/crates/engine/src/scan_fields.rs
+index 05906d75..8057bbf2 100644
+--- a/crates/engine/src/scan_fields.rs
++++ b/crates/engine/src/scan_fields.rs
+@@ -11,7 +11,9 @@
+ use pdfcraft_forms::detect::{Candidate, Word, detect, raster};
+ use pdfcraft_render::{PageInfo, PageRenderer, PageText, RenderRequest};
+ 
+-use crate::{DocId, Document, Session, ocr};
++#[cfg(feature = "ocr")]
++use crate::ocr;
++use crate::{DocId, Document, Session};
+ 
+ /// Pixels per point the page is rendered at for its lines (144 dpi).
+ const SCALE: f32 = 2.0;
+@@ -24,6 +26,7 @@ const COVERED: f64 = 0.5;
+ const MIN_FORM_DPI: f64 = 36.0;
+ /// Recognised "words" less tall than this (points) are specks read as letters, and would make
+ /// the box they sit on look filled in.
++#[cfg(feature = "ocr")]
+ const MIN_WORD_HEIGHT: f64 = 4.0;
+ 
+ /// Whether `page` is a picture of a page: images cover most of it.
+@@ -182,6 +185,12 @@ impl Session {
+     }
+ 
+     /// The words text recognition reads on `page`, in the frame; none without the models.
++    #[cfg(not(feature = "ocr"))]
++    fn recognized_words(&self, _id: DocId, _page: usize, _frame: &Frame) -> Vec<Word> {
++        Vec::new()
++    }
++
++    #[cfg(feature = "ocr")]
+     fn recognized_words(&self, id: DocId, page: usize, frame: &Frame) -> Vec<Word> {
+         if !ocr::available() {
+             return Vec::new();
+diff --git a/crates/engine/src/session.rs b/crates/engine/src/session.rs
+index e5029ccb..a8274fb3 100644
+--- a/crates/engine/src/session.rs
++++ b/crates/engine/src/session.rs
+@@ -11,13 +11,16 @@ use crate::edit::{EditCtx, check_permission, run_edit};
+ use crate::history::{Keys, MAX_UNDO, Scope, keys_after, scope_of, uses_scripts};
+ use crate::{
+     BookmarkPage, BookmarkRow, CombineSource, Combined, DataFormat, DocId, Document, Edit, EditError, Hidden, ImageResolution,
+-    LOW_RESOLUTION_PRINT_DPI, Label, ObjectKind, OptimizeReport, RecoverySnapshot, SignOptions, SourceKind, SplitPart, StatusCaptions, SummarySort,
++    Label, ObjectKind, OptimizeReport, RecoverySnapshot, SourceKind, SplitPart, StatusCaptions, SummarySort,
+     TrustStore, XFA_REMOVED_PREFIX, XFA_SCRIPTS_OFF, apply_layer_state, carry_verdict_marks, comment_list, comment_summary, decode_text,
+     display_bytes, display_config, guard, info_fields, js, local_utc_offset, note_warnings, open_source, open_source_with, optimize, outline_rows,
+-    parse_ymd, print, print_raster, render_threads, scan_colours, set_default_layer_state, shown_under_redactions, signatures_of, source_kind,
++    parse_ymd, render_threads, scan_colours, shown_under_redactions, signatures_of, source_kind,
+     sync_xfa_state, undrawn_notices, use_layer_choices, writable, xfa, xfa_sync_datasets,
+ };
+ 
++#[cfg(feature = "sign")]
++use crate::SignOptions;
++
+ mod editing;
+ mod files;
+ mod save;
+diff --git a/crates/engine/src/session/editing.rs b/crates/engine/src/session/editing.rs
+index 753f8dd0..a4b058f2 100644
+--- a/crates/engine/src/session/editing.rs
++++ b/crates/engine/src/session/editing.rs
+@@ -78,7 +78,7 @@ impl Session {
+         }
+         let mut next = editor.cos.clone();
+         if !js_off && uses_scripts(&edit) {
+-            cx.js = Some(js::JsRunner::new(&next, &name));
++            cx.js = js::runner_for(&next, &name);
+         }
+         cx.renamed_fields.clear();
+         cx.redaction_overlays.clear();
+diff --git a/crates/engine/src/session/files.rs b/crates/engine/src/session/files.rs
+index f4e25bc2..2e43a8f0 100644
+--- a/crates/engine/src/session/files.rs
++++ b/crates/engine/src/session/files.rs
+@@ -1,9 +1,12 @@
+ use super::{
+-    Arc, CombineSource, Combined, DataFormat, DocId, EditError, Hidden, ImageResolution, LOW_RESOLUTION_PRINT_DPI, OptimizeReport, SaveOptions,
+-    Session, SourceKind, SplitPart, decode_text, guard, open_source, open_source_with, optimize, print, print_raster, set_default_layer_state,
++    Arc, CombineSource, Combined, DataFormat, DocId, EditError, Hidden, ImageResolution, OptimizeReport, SaveOptions,
++    Session, SourceKind, SplitPart, decode_text, guard, open_source, open_source_with, optimize,
+     source_kind, writable, write_full,
+ };
+ 
++#[cfg(feature = "print")]
++use crate::{LOW_RESOLUTION_PRINT_DPI, print, print_raster, set_default_layer_state};
++
+ impl Session {
+     /// The page count of another PDF (Replace Pages, Insert Pages dialogs).
+     pub fn page_count_of(&self, name: &str, bytes: &Arc<Vec<u8>>) -> Result<usize, EditError> {
+@@ -127,6 +130,7 @@ impl Session {
+         guard(|| pdfcraft_xfdf::export_xfdf_comments(&cos, which, &doc.name)).map_err(EditError::Write)
+     }
+ 
++#[cfg(feature = "print")]
+     /// The print-ready PDF for `settings` (sheets laid out for the paper; see `pdfcraft-print`).
+     pub fn print_pdf(&self, id: DocId, settings: &print::Settings) -> Result<Vec<u8>, EditError> {
+         let doc = self.get(id).ok_or(EditError::NoDocument)?;
+@@ -173,11 +177,12 @@ impl Session {
+         // Signature states as the screen shows them, so not when its display copy could not be
+         // written. This copy is only printed, never saved.
+         if doc.signatures.iter().any(|s| s.verdict_shown) {
+-            let _ = pdfcraft_sign::show_status_layers(&mut cos, &mut doc.signatures.to_vec(), &doc.captions);
++            let _ = crate::sign_api::show_status_layers(&mut cos, &mut doc.signatures.to_vec(), &doc.captions);
+         }
+         pdfcraft_print::impose(&cos, settings).map_err(|e| EditError::Print(e.to_string()))
+     }
+ 
++#[cfg(feature = "print")]
+     /// For each page, whether its text mostly runs bottom-to-top ([`pdfcraft_print::text_reads_up`]);
+     /// only `pages` are read, the others are `false`.
+     pub fn print_text_up(&self, id: DocId, pages: &[usize]) -> Vec<bool> {
+@@ -226,7 +231,7 @@ impl Session {
+             let pages = match range {
+                 Some(r) => {
+                     let n = pdfcraft_organize::page_count(&doc).map_err(EditError::from)?;
+-                    let p = pdfcraft_print::select_pages(n, Some(r), &[], pdfcraft_print::Subset::All, false)
++                    let p = crate::page_range::select(n, r)
+                         .map_err(|e| EditError::Print(format!("{title}: {e}")))?;
+                     Some(p)
+                 }
+@@ -278,7 +283,7 @@ impl Session {
+             pages.push(match range {
+                 Some(r) => {
+                     let n = pdfcraft_organize::page_count(d)?;
+-                    let p = pdfcraft_print::select_pages(n, Some(r), &[], pdfcraft_print::Subset::All, false)
++                    let p = crate::page_range::select(n, r)
+                         .map_err(|e| EditError::Print(format!("{name}: {e}")))?;
+                     Some(p)
+                 }
+@@ -330,7 +335,7 @@ impl Session {
+             pages.push(match range {
+                 Some(r) => {
+                     let n = pdfcraft_organize::page_count(d)?;
+-                    let p = pdfcraft_print::select_pages(n, Some(r), &[], pdfcraft_print::Subset::All, false)
++                    let p = crate::page_range::select(n, r)
+                         .map_err(|e| EditError::Print(format!("{name}: {e}")))?;
+                     Some(p)
+                 }
+diff --git a/crates/engine/src/session/save.rs b/crates/engine/src/session/save.rs
+index 34f4d440..bb857bb0 100644
+--- a/crates/engine/src/session/save.rs
++++ b/crates/engine/src/session/save.rs
+@@ -1,8 +1,11 @@
+ use super::{
+-    Arc, DocId, Document, EditError, Keys, OpenError, RecoverySnapshot, RenderPool, SaveOptions, Session, SignOptions, StatusCaptions, TrustStore,
++    Arc, DocId, Document, EditError, Keys, OpenError, RecoverySnapshot, RenderPool, SaveOptions, Session, StatusCaptions, TrustStore,
+     display_bytes, display_config, guard, render_threads, signatures_of, writable, write_full, write_incremental, xfa_sync_datasets,
+ };
+ 
++#[cfg(feature = "sign")]
++use super::SignOptions;
++
+ impl Session {
+     /// The bytes to write for Save: an incremental update of the file as opened/last saved,
+     /// with `/ModDate` stamped. Call `mark_saved` after writing them successfully.
+@@ -232,6 +235,7 @@ impl Session {
+     }
+ 
+     /// The certificates trusted for signing.
++    #[cfg(feature = "sign")]
+     pub fn trusted_certificates(&self) -> &[pdfcraft_sign::Certificate] {
+         &self.trust.certs
+     }
+@@ -239,6 +243,7 @@ impl Session {
+     /// Replace the trusted certificates, revalidate every open document's signatures,
+     /// and rebuild its display copy and renderer to match (working file untouched,
+     /// generation/dirty unchanged: trust alone is not an edit).
++    #[cfg(feature = "sign")]
+     pub fn set_trusted_certificates(&mut self, certs: Vec<pdfcraft_sign::Certificate>) {
+         self.trust = Arc::new(TrustStore { certs });
+         for doc in &mut self.docs {
+@@ -306,6 +311,7 @@ impl Session {
+     /// Sign the document's current state with `id` (Use a certificate ▸ Digitally sign). Returns
+     /// the signed file; the caller saves it and then calls [`Session::mark_signed`]. An empty
+     /// `opts.date` takes the session clock.
++    #[cfg(feature = "sign")]
+     pub fn sign(&self, doc: DocId, id: &pdfcraft_sign::DigitalId, mut opts: SignOptions) -> Result<Arc<Vec<u8>>, EditError> {
+         let d = self.get(doc).ok_or(EditError::NoDocument)?;
+         // Encrypted documents are signed under their permissions (the signer checks them).
+@@ -320,6 +326,7 @@ impl Session {
+ 
+     /// [`Session::sign`], embedding an RFC 3161 signature timestamp (PAdES B-T) produced by
+     /// `tsa`. The transport lives with the caller; the engine never opens a socket.
++    #[cfg(feature = "sign")]
+     pub fn sign_with_timestamp(
+         &self,
+         doc: DocId,
+@@ -341,6 +348,7 @@ impl Session {
+ 
+     /// Append a standalone document timestamp (RFC 3161, `/ETSI.RFC3161`) covering the file's
+     /// current state. An empty `date` takes the session clock; the transport is the caller's.
++    #[cfg(feature = "sign")]
+     pub fn timestamp_document(&self, doc: DocId, tsa: &dyn pdfcraft_sign::TimestampAuthority, date: String) -> Result<Arc<Vec<u8>>, EditError> {
+         let d = self.get(doc).ok_or(EditError::NoDocument)?;
+         let editor = d.editor.as_ref().ok_or_else(|| EditError::ReadOnly(d.read_only_reason.clone().unwrap_or_default()))?;
+@@ -353,6 +361,7 @@ impl Session {
+ 
+     /// Embed revocation evidence into the catalog's `/DSS` with `/VRI` entries per signature
+     /// (PAdES B-LT): an incremental update that never rewrites signed bytes.
++    #[cfg(feature = "sign")]
+     pub fn embed_ltv(&self, doc: DocId, evidence: &pdfcraft_sign::dss::Evidence) -> Result<Arc<Vec<u8>>, EditError> {
+         let d = self.get(doc).ok_or(EditError::NoDocument)?;
+         let editor = d.editor.as_ref().ok_or_else(|| EditError::ReadOnly(d.read_only_reason.clone().unwrap_or_default()))?;
+@@ -387,9 +396,10 @@ impl Session {
+ /// the program that filled it drew with a font that has the character. A field whose own
+ /// appearance draws no text gets PdfCraft's drawing, `?` and all. Later signatures change
+ /// nothing here: redrawing would count as a change to the earlier signatures.
++#[cfg(feature = "sign")]
+ fn drawn_for_first_signature(cos: std::borrow::Cow<'_, pdfcraft_cos::Document>) -> std::borrow::Cow<'_, pdfcraft_cos::Document> {
+     use pdfcraft_forms::FieldKind;
+-    if !pdfcraft_forms::need_appearances(&cos) || pdfcraft_sign::has_signatures(&cos) {
++    if !pdfcraft_forms::need_appearances(&cos) || crate::sign_api::has_signatures(&cos) {
+         return cos;
+     }
+     let Some(mut drawn) = pdfcraft_forms::with_field_appearances(&cos) else { return cos };
+@@ -410,6 +420,7 @@ fn drawn_for_first_signature(cos: std::borrow::Cow<'_, pdfcraft_cos::Document>)
+     std::borrow::Cow::Owned(drawn)
+ }
+ 
++#[cfg(feature = "sign")]
+ /// Whether the widget's normal appearance stream (`/AP /N`) shows text, itself or through the
+ /// form XObjects it paints (a background-only one doesn't count).
+ fn draws_text(cos: &pdfcraft_cos::Document, widget: &pdfcraft_cos::Dict) -> bool {
+@@ -419,6 +430,7 @@ fn draws_text(cos: &pdfcraft_cos::Document, widget: &pdfcraft_cos::Dict) -> bool
+     stream_draws_text(cos, s, &mut 16)
+ }
+ 
++#[cfg(feature = "sign")]
+ /// Whether the form stream `s` shows text, following `Do` into its form XObjects. `budget` caps
+ /// the streams opened along the way; running out (deep nesting, a cycle, many XObjects) counts
+ /// as text, so the field keeps its own appearance as it would without the look inside.
+diff --git a/crates/engine/src/sign_off.rs b/crates/engine/src/sign_off.rs
+new file mode 100644
+index 00000000..50df5694
+--- /dev/null
++++ b/crates/engine/src/sign_off.rs
+@@ -0,0 +1,62 @@
++//! Stand-ins for the `pdfcraft-sign` items the rest of the engine names, compiled when the `sign`
++//! feature is off. Nothing is verified, drawn or signed. A signed file is still recognised (a
++//! dictionary with a `/ByteRange` and a `/Contents` string), so the guards that refuse to
++//! rewrite a signed file, and `Document::is_signed`, keep working.
++
++use pdfcraft_cos::{Dict, Document};
++
++/// A signature found in the file. Its state is always unknown.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct SignatureInfo {
++    pub field: String,
++    pub signed: bool,
++    pub revision: usize,
++    pub status: Status,
++    pub verdict_shown: bool,
++}
++
++/// What a signature's check came to; without the `sign` feature nothing is checked.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
++pub enum Status {
++    #[default]
++    Unknown,
++}
++
++#[derive(Clone, Debug, Default)]
++pub struct TrustStore;
++
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct StatusCaptions;
++
++#[derive(Debug, Default)]
++pub struct DigestCache;
++
++fn signed(doc: &Document, d: &Dict) -> bool {
++    d.contains(b"ByteRange") && d.get(b"Contents").is_some_and(|c| doc.resolve(c).as_string().is_some())
++}
++
++pub fn has_status_layers(_doc: &Document, _signatures: &[SignatureInfo]) -> bool {
++    false
++}
++
++pub fn show_status_layers(_doc: &mut Document, _signatures: &mut [SignatureInfo], _captions: &StatusCaptions) -> bool {
++    false
++}
++
++pub mod pdf {
++    use super::{DigestCache, SignatureInfo, TrustStore, signed};
++    use pdfcraft_cos::Document;
++
++    /// The signed signature dictionaries of `doc`, as unchecked entries.
++    pub fn list_cached(doc: &Document, _bytes: &[u8], _trust: &TrustStore, _cache: &DigestCache) -> Vec<SignatureInfo> {
++        doc.scan_objects()
++            .filter(|(_, o)| o.as_dict().is_some_and(|d| signed(doc, d)))
++            .enumerate()
++            .map(|(i, _)| SignatureInfo { signed: true, revision: i + 1, ..SignatureInfo::default() })
++            .collect()
++    }
++
++    pub fn list(doc: &Document, bytes: &[u8], trust: &TrustStore) -> Vec<SignatureInfo> {
++        list_cached(doc, bytes, trust, &DigestCache)
++    }
++}
+diff --git a/crates/engine/src/signature_image.rs b/crates/engine/src/signature_image.rs
+index 074adfc8..1716ac47 100644
+--- a/crates/engine/src/signature_image.rs
++++ b/crates/engine/src/signature_image.rs
+@@ -195,6 +195,7 @@ impl SignatureImage {
+     }
+ 
+     /// This image as the graphic of a visible digital signature.
++    #[cfg(feature = "sign")]
+     pub fn graphic(&self) -> pdfcraft_sign::Graphic {
+         // Sides are at most 4096 pixels; 0 would be refused by the signer, never drawn.
+         let side = |v: usize| u32::try_from(v).unwrap_or(0);
+diff --git a/crates/engine/src/tests.rs b/crates/engine/src/tests.rs
+index 4df86089..3ece2f59 100644
+--- a/crates/engine/src/tests.rs
++++ b/crates/engine/src/tests.rs
+@@ -1,3 +1,6 @@
++// Tests of a feature that is off are left out, and so are the helpers only they use.
++#![cfg_attr(not(all(feature = "sign", feature = "ocr", feature = "print", feature = "js")), allow(dead_code, unused_imports))]
++
+ use std::sync::Arc;
+ 
+ use super::document::{is_placeholder_title, write_display_copy};
+@@ -450,6 +453,7 @@ fn explicit_image_stamps_keep_displayed_orientation_on_rotated_pages() {
+     }
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A visible digital signature reads upright as the page is displayed on every page rotation:
+ /// its picture, alone in the box, shows its quadrants where they are in the image.
+ #[test]
+@@ -935,6 +939,7 @@ fn a_repaired_file_is_rewritten_by_save_even_without_edits() {
+     }
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A damaged file that is signed keeps its bytes on a Save without edits: rewriting it in full
+ /// to put the repair on disk would invalidate its signatures without a word.
+ #[test]
+@@ -1670,6 +1675,7 @@ fn print_restricted_documents_disable_print_unless_opened_by_the_owner() {
+     assert!(enabled(&s, low, "print.dialog"), "low-resolution printing is printing");
+ }
+ 
++#[cfg(feature = "print")]
+ /// Table 22, bit 12 clear: printing is limited to a low-level representation. Whatever the
+ /// settings ask for, the print-ready PDF carries each page as a picture of at most 150 dpi, with
+ /// no text or vector artwork left; the owner password lifts the limit.
+@@ -1731,6 +1737,7 @@ fn print_content_pdf() -> Vec<u8> {
+     .into_bytes()
+ }
+ 
++#[cfg(feature = "print")]
+ /// Low-resolution printing prints what the chosen content prints when the pages themselves are
+ /// printed: form fields only leaves out the page content and every comment, the document alone
+ /// leaves out the comments, and the document with stamps keeps only the stamps.
+@@ -2682,6 +2689,7 @@ fn a_typed_password_value_survives_save_and_mark_saved() {
+     assert!(!appears_in_pdf(&s.save_bytes(id).unwrap(), "hunter2"), "the next save still omits it");
+ }
+ 
++#[cfg(feature = "sign")]
+ /// #3926 / #3943 review: signing writes the signed file from the same copy a save does, so a
+ /// typed Password-field value is not signed into the file either.
+ #[test]
+@@ -2751,6 +2759,7 @@ fn normal_appearance(doc: &pdfcraft_cos::Document, num: u32) -> String {
+     String::from_utf8_lossy(&s.decoded().unwrap()).into_owned()
+ }
+ 
++#[cfg(feature = "sign")]
+ /// #5939 review: the first signature removes `/NeedAppearances`, so the fields are drawn from
+ /// their values first; without that, `name` and `town` would show their empty placeholders. A
+ /// field whose own appearance draws its value keeps it rather than get a `?` for `ř`.
+@@ -2781,6 +2790,7 @@ fn the_first_signature_draws_the_fields_need_appearances_left_to_the_viewer() {
+     assert_eq!((sig.signed, sig.status, sig.modification.clone()), (true, SignatureStatus::Valid, sign::Modification::None));
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A later signature draws nothing and leaves the flag: either would be a change to what the
+ /// first signature covers.
+ #[test]
+@@ -3079,6 +3089,7 @@ fn preparing_a_form_adds_renames_and_deletes_fields() {
+     assert_eq!(names(&s), ["Text1", "Check Box1", "email"]);
+ }
+ 
++#[cfg(feature = "js")]
+ /// Setting the calculation order is one undoable edit that recalculates: values that ran too
+ /// early come out right at once, a script calculation included, and undo brings back the old
+ /// order and values together.
+@@ -3342,6 +3353,7 @@ fn removed_redaction_marks_are_not_saved() {
+     }
+ }
+ 
++#[cfg(feature = "sign")]
+ /// Removed marks are not in a signed file either, nor in one with revocation evidence embedded:
+ /// no later save could take them out of those.
+ #[test]
+@@ -3388,6 +3400,7 @@ fn oversized_redaction_overlay_preserves_the_document_and_undo() {
+     assert_eq!(page_texts(&s, id), ["Page 1"]);
+ }
+ 
++#[cfg(feature = "print")]
+ /// #3046: a layer hidden in the Layers panel stays off on paper, as it is on screen; with the
+ /// layers untouched, the document's own configuration prints.
+ #[test]
+@@ -3441,6 +3454,7 @@ fn printing_keeps_hidden_layers_hidden() {
+     assert!(red > 100, "shown again, Layer A prints again: {red} red");
+ }
+ 
++#[cfg(feature = "print")]
+ #[test]
+ fn printing_lays_out_sheets_that_render() {
+     let (s, id) = session_with(5);
+@@ -3490,6 +3504,7 @@ fn first_page_has_red(pdf: Vec<u8>) -> bool {
+     page.rgba.as_chunks::<4>().0.iter().any(|p| p[0] > 200 && p[1] < 60 && p[2] < 60)
+ }
+ 
++#[cfg(feature = "print")]
+ #[test]
+ fn a_layer_that_is_off_does_not_print_and_one_that_is_on_does() {
+     for (off, prints) in [(true, false), (false, true)] {
+@@ -4129,6 +4144,7 @@ fn flattening_fill_and_sign_is_refused_without_permission_to_change() {
+     assert!(comment_text(&other, id2).contains(&"Hello".to_string()));
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn flattening_fill_and_sign_on_a_signed_file_stays_incremental() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -4816,6 +4832,7 @@ fn reading_colors_set_and_invalidated() {
+     assert!(!s.set_reading_colors(DocId(u64::MAX), ReadingColors::WHITE_ON_BLACK));
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn signing_saving_trusting_and_commenting_afterwards() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -4850,6 +4867,7 @@ fn signing_saving_trusting_and_commenting_afterwards() {
+     assert!(!s.get(id).unwrap().dirty && s.get(id).unwrap().can_undo().map(str::to_owned) == before);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn validated_signatures_without_layers_keep_their_appearance() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -4872,6 +4890,7 @@ fn validated_signatures_without_layers_keep_their_appearance() {
+     assert!(Arc::ptr_eq(&doc.display, &doc.bytes));
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn signed_pages_render_trust_save_and_reopen() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -4903,6 +4922,7 @@ fn signed_pages_render_trust_save_and_reopen() {
+     assert_eq!(u.get(uid).unwrap().signatures[0].status, SignatureStatus::Valid);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn signed_documents_round_trip_behind_a_user_password() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -4990,6 +5010,7 @@ fn bytes_has(haystack: &[u8], needle: &[u8]) -> bool {
+     !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+ }
+ 
++#[cfg(feature = "sign")]
+ /// Sign `doc`, whose field already carries its layered appearance, without
+ /// touching that appearance: reserve `/ByteRange` and `/Contents`, hash the
+ /// ranges and embed a detached CMS over them. The signed bytes keep the
+@@ -4998,6 +5019,7 @@ fn sign_prepared(doc: &mut pdfcraft_cos::Document, id: &sign::pkcs12::DigitalId,
+     sign_prepared_with(doc, id, date, |_| {})
+ }
+ 
++#[cfg(feature = "sign")]
+ /// [`sign_prepared`], with `value` adding to the signature dictionary first (a certification's
+ /// `/Reference`, say).
+ fn sign_prepared_with(
+@@ -5064,6 +5086,8 @@ fn printed_pixels(bytes: Vec<u8>) -> (u32, u32, Vec<u8>) {
+     (r.width, r.height, r.rgba.to_vec())
+ }
+ 
++#[cfg(feature = "sign")]
++#[cfg(feature = "print")]
+ /// Validation belongs to viewer chrome, not to document artwork or export sources.
+ fn assert_signature_artwork_survives_trust(mut cos: pdfcraft_cos::Document, expected_text: &[&str]) {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -5107,6 +5131,8 @@ fn assert_signature_artwork_survives_trust(mut cos: pdfcraft_cos::Document, expe
+     assert_eq!(exporter.png(0, 72.0).unwrap(), original_png);
+ }
+ 
++#[cfg(feature = "sign")]
++#[cfg(feature = "print")]
+ #[test]
+ fn chamfered_signature_borders_survive_trust_exports_printing_and_save() {
+     for raster_glyph in [false, true] {
+@@ -5133,6 +5159,8 @@ fn chamfered_signature_borders_survive_trust_exports_printing_and_save() {
+     }
+ }
+ 
++#[cfg(feature = "sign")]
++#[cfg(feature = "print")]
+ #[test]
+ fn mixed_signature_caption_details_survive_trust_exports_printing_and_save() {
+     let mut doc = pdfcraft_cos::Document::open(Arc::new(layered_signable_fixture())).unwrap();
+@@ -5140,6 +5168,7 @@ fn mixed_signature_caption_details_survive_trust_exports_printing_and_save() {
+     assert_signature_artwork_survives_trust(doc, &["Alice Signer", "alice@example.org", "Not Verified"]);
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A real layered signature through `Session`: validity, original artwork,
+ /// rendering, saving and reopening. `password` opens the signed bytes.
+ fn check_layered_round_trip(signed: Arc<Vec<u8>>, password: Option<&str>, anchor: &sign::x509::Certificate) {
+@@ -5172,6 +5201,7 @@ fn check_layered_round_trip(signed: Arc<Vec<u8>>, password: Option<&str>, anchor
+     assert_eq!(rsig.status, SignatureStatus::Valid);
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A trusted layered signature whose original appearance remains document artwork.
+ fn trusted_layered_session() -> (Session, DocId) {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -5186,6 +5216,7 @@ fn trusted_layered_session() -> (Session, DocId) {
+     (s, vid)
+ }
+ 
++#[cfg(feature = "sign")]
+ /// Metadata edits retain the original caption; the UI can still show its verdict badge.
+ #[test]
+ fn a_metadata_edit_keeps_the_original_signature_appearance() {
+@@ -5197,6 +5228,7 @@ fn a_metadata_edit_keeps_the_original_signature_appearance() {
+     assert!(!bytes_has(&doc.display, b"Signature valid"));
+ }
+ 
++#[cfg(feature = "sign")]
+ /// An unchanged document never reaches the writer, so the edit is what makes this the
+ /// place the display copy would leak if saving ever read it.
+ #[test]
+@@ -5208,6 +5240,7 @@ fn saving_after_an_edit_keeps_the_baked_appearance() {
+     assert!(!bytes_has(&saved, b"Signature valid"), "the validated state never reaches the file");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn real_layered_signatures_keep_their_original_appearance() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -5219,6 +5252,7 @@ fn real_layered_signatures_keep_their_original_appearance() {
+     check_layered_round_trip(signed, None, &anchor);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn real_layered_signatures_round_trip_behind_a_user_password() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -5336,6 +5370,7 @@ fn exported_text(s: &Session, id: DocId) -> String {
+     export::Exporter::new(s.get(id).unwrap()).text_of(&[0]).unwrap()
+ }
+ 
++#[cfg(feature = "sign")]
+ /// The test identity and the certificate that makes it trusted.
+ fn test_identity() -> (sign::pkcs12::DigitalId, sign::x509::Certificate) {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -5344,6 +5379,7 @@ fn test_identity() -> (sign::pkcs12::DigitalId, sign::x509::Certificate) {
+     (id, anchor)
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A named-layer signature through `Session`: the unknown state drawn on opening, the valid one
+ /// once trusted, the signed bytes saved unchanged and still valid on reopening.
+ fn check_named_layer_states(signed: Arc<Vec<u8>>, password: Option<&str>, anchor: &sign::x509::Certificate) {
+@@ -5377,6 +5413,7 @@ fn check_named_layer_states(signed: Arc<Vec<u8>>, password: Option<&str>, anchor
+     assert!(exported.contains("Signature valid"), "{exported}");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn named_layer_signatures_show_their_state_through_trust_save_and_reopen() {
+     let (id, anchor) = test_identity();
+@@ -5385,6 +5422,7 @@ fn named_layer_signatures_show_their_state_through_trust_save_and_reopen() {
+     check_named_layer_states(signed, None, &anchor);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn named_layer_signatures_round_trip_behind_a_user_password() {
+     let (id, anchor) = test_identity();
+@@ -5404,6 +5442,7 @@ fn named_layer_signatures_round_trip_behind_a_user_password() {
+     check_named_layer_states(signed, Some("user"), &anchor);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn a_tampered_named_layer_signature_shows_the_invalid_state() {
+     let (id, _) = test_identity();
+@@ -5421,6 +5460,7 @@ fn a_tampered_named_layer_signature_shows_the_invalid_state() {
+     assert!(red > 500, "{red} red pixels");
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A trusted named-layer signature.
+ fn trusted_named_layer_session() -> (Session, DocId) {
+     let (id, anchor) = test_identity();
+@@ -5433,6 +5473,8 @@ fn trusted_named_layer_session() -> (Session, DocId) {
+     (s, vid)
+ }
+ 
++#[cfg(feature = "sign")]
++#[cfg(feature = "print")]
+ #[test]
+ fn named_layer_states_reach_exports_and_both_print_modes() {
+     // What is drawn on the page is what leaves it.
+@@ -5454,6 +5496,7 @@ fn named_layer_states_reach_exports_and_both_print_modes() {
+     }
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn named_layers_show_beside_comments_that_need_appearances() {
+     // A comment without an appearance makes the display copy for its own sake; the signature's
+@@ -5475,6 +5518,7 @@ fn named_layers_show_beside_comments_that_need_appearances() {
+     assert!(green > 500, "{green} green pixels");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn named_layers_show_beside_fields_the_viewer_draws() {
+     // A text field without an appearance makes the display copy for its own sake; the
+@@ -5509,6 +5553,7 @@ fn named_layers_show_beside_fields_the_viewer_draws() {
+     assert!(green > 500, "{green} green pixels");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn a_metadata_edit_keeps_the_regenerated_state() {
+     let (mut s, id) = trusted_named_layer_session();
+@@ -5519,6 +5564,7 @@ fn a_metadata_edit_keeps_the_regenerated_state() {
+     assert!(exported.contains("Signature valid"), "{exported}");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn a_metadata_edit_that_changes_a_verdict_redraws_it() {
+     // A certification that allows no changes: setting the title invalidates the signature, and
+@@ -5546,6 +5592,7 @@ fn a_metadata_edit_that_changes_a_verdict_redraws_it() {
+     assert!(red > 500, "{red} red pixels");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn verdict_marks_carry_over_only_while_every_verdict_is_unchanged() {
+     let (s, id) = trusted_named_layer_session();
+@@ -5562,6 +5609,7 @@ fn verdict_marks_carry_over_only_while_every_verdict_is_unchanged() {
+     assert!(!carry_verdict_marks(&previous, &mut later) && !later[0].verdict_shown);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn releasing_the_working_file_drops_the_marks() {
+     // The page shows the original's own artwork until the refresh finishes.
+@@ -5572,6 +5620,7 @@ fn releasing_the_working_file_drops_the_marks() {
+     assert!(!doc.signatures[0].verdict_shown);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn background_open_uses_the_current_trust_at_commit() {
+     let (signer, anchor) = test_identity();
+@@ -5587,6 +5636,7 @@ fn background_open_uses_the_current_trust_at_commit() {
+     assert!(exported.contains("Signature valid"), "{exported}");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn background_open_uses_the_current_trust_and_language_at_commit() {
+     // Both changed while the document was prepared: the state and its words are both the new ones.
+@@ -5607,6 +5657,8 @@ fn background_open_uses_the_current_trust_and_language_at_commit() {
+     assert!(exported.contains("Signatur gültig"), "{exported}");
+ }
+ 
++#[cfg(feature = "sign")]
++#[cfg(feature = "print")]
+ #[test]
+ fn printing_draws_signature_states_only_where_the_screen_does() {
+     let (mut s, id) = trusted_named_layer_session();
+@@ -5622,6 +5674,7 @@ fn printing_draws_signature_states_only_where_the_screen_does() {
+     assert!(green < 50, "{green} green pixels");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn a_failed_display_write_drops_the_marks() {
+     let (mut s, id) = trusted_named_layer_session();
+@@ -5640,6 +5693,7 @@ fn a_failed_display_write_drops_the_marks() {
+     assert_eq!(logged, 1);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn background_open_uses_the_current_caption_language_at_commit() {
+     let (mut s, id) = trusted_named_layer_session();
+@@ -5657,6 +5711,7 @@ fn background_open_uses_the_current_caption_language_at_commit() {
+     assert!(!s.get(later).unwrap().dirty);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn caption_language_follows_the_session_captions() {
+     let (mut s, id) = trusted_named_layer_session();
+@@ -5676,6 +5731,7 @@ fn caption_language_follows_the_session_captions() {
+     assert!(exported.contains("Signatur gültig"), "{exported}");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn non_win_ansi_captions_embed_inter_in_the_display_copy_only() {
+     // Words WinAnsi cannot encode are drawn in Inter, embedded into the display copy only.
+@@ -5692,6 +5748,7 @@ fn non_win_ansi_captions_embed_inter_in_the_display_copy_only() {
+     assert!(bytes_has(&doc.display, b"/BaseFont /Inter") && !bytes_has(&doc.bytes, b"/BaseFont /Inter"), "Inter goes into the display copy only");
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ #[ignore = "timing probe"]
+ fn probe_edit_latency_on_a_large_signed_document() {
+@@ -5801,6 +5858,7 @@ fn backgrounds_and_watermarks_from_files() {
+     assert!(s.apply(id, Edit::AddBackground { pages: vec![0], settings: Background::default(), replace: true, file: Some(junk) }).is_err());
+ }
+ 
++#[cfg(feature = "ocr")]
+ /// The web build reads a page at a time (prepared on the page, recognised in a worker, the
+ /// lines sent back as JSON); with the real ocrs engine that finds the same words as reading in
+ /// one go (needs the models: `cargo xtask models`; skipped without them).
+@@ -5830,6 +5888,7 @@ fn reading_a_page_at_a_time_finds_the_same_words() {
+     assert!(at_once.len() == 2 && at_once.iter().all(|p| p.skipped.is_none() && !p.words.is_empty()), "{at_once:?}");
+ }
+ 
++#[cfg(feature = "ocr")]
+ /// Scan & OCR ▸ Recognize text on a page that is only a picture of text (needs the models:
+ /// `cargo xtask models`; skipped without them).
+ #[test]
+@@ -5879,6 +5938,7 @@ fn synthetic_ocr_scan_keeps_the_original_page_size_without_models() {
+     assert_eq!(page_texts(&s, id), [""], "the scan has no text until OCR runs");
+ }
+ 
++#[cfg(feature = "ocr")]
+ #[test]
+ fn recognize_text_makes_a_scanned_page_searchable() {
+     if !ocr::available() {
+@@ -5910,6 +5970,7 @@ fn recognize_text_makes_a_scanned_page_searchable() {
+     assert!(again[0].skipped.is_some());
+ }
+ 
++#[cfg(feature = "ocr")]
+ /// #1028: a page with its own text and a picture of text. By default it is skipped, as before;
+ /// with `skip_text_pages: false` the picture is read and the page's own text is not added again.
+ #[test]
+@@ -5953,6 +6014,7 @@ fn recognize_text_reads_a_picture_on_a_page_that_has_text() {
+     assert_eq!((count(&s, "invoice"), count(&s, "brown")), (1, 1));
+ }
+ 
++#[cfg(feature = "ocr")]
+ /// Edit reads a scan that only has comments on it, not a page with real text and a picture
+ /// (`native_text_only`): a text box over the picture is not the page's text, page content is.
+ #[test]
+@@ -6047,6 +6109,7 @@ fn scripted_form_with(helpers: &str) -> Vec<u8> {
+     out
+ }
+ 
++#[cfg(feature = "js")]
+ /// AcroForm field scripts validate, calculate and format through edits, and a button script's
+ /// changes, messages and requests come back.
+ #[test]
+@@ -6080,6 +6143,7 @@ fn form_javascript_validates_calculates_and_formats() {
+     assert!(s.run_javascript(id, "1", None).is_err());
+ }
+ 
++#[cfg(feature = "js")]
+ /// XFA forms check `xfa_installed` and `xfa_version` in a document script that runs before
+ /// each of their scripts, and alert when either is missing.
+ #[test]
+@@ -6094,6 +6158,7 @@ fn scripts_in_an_xfa_form_see_the_xfa_plugin_installed() {
+     assert_eq!((o.error, o.result.as_deref()), (None, Some("undefined number 3.5")));
+ }
+ 
++#[cfg(feature = "js")]
+ /// #3940: a document-level script that defines the helper and then calls a method PdfCraft lacks
+ /// (an Acrobat form copying a button icon at open) left every calculated field blank. The
+ /// helper stays defined, the form calculates, and the error is reported once.
+@@ -6115,6 +6180,7 @@ fn a_document_script_that_throws_still_lets_the_form_calculate() {
+     assert_eq!((o.error, o.result.as_deref(), o.doc_errors.len()), (None, Some("6"), 1));
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn active_xfa_does_not_run_pdf_container_scripts_but_keeps_requested_alerts() {
+     let template = pdfcraft_xfa::fixtures::scripted_template().replace(
+@@ -6153,6 +6219,7 @@ fn active_xfa_does_not_run_pdf_container_scripts_but_keeps_requested_alerts() {
+     assert!(s.run_javascript(id, "", None).unwrap().alerts.is_empty());
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn active_xfa_without_template_scripts_does_not_initialize_pdf_fallback_scripts() {
+     let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+@@ -6169,6 +6236,7 @@ fn active_xfa_without_template_scripts_does_not_initialize_pdf_fallback_scripts(
+     assert_eq!(out.alerts, [js::Message::plain("Console message")]);
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn inactive_xfa_and_ordinary_pdfs_keep_document_helpers_and_alerts() {
+     for bytes in [
+@@ -6187,6 +6255,7 @@ fn inactive_xfa_and_ordinary_pdfs_keep_document_helpers_and_alerts() {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn edit_history_does_not_replay_field_script_side_effects() {
+     let mut s = Session::new().with_clock(|| 1_700_000_000);
+@@ -6356,6 +6425,7 @@ fn scanned_form(scan: Scan) -> Arc<Vec<u8>> {
+     s.save_bytes(id).unwrap()
+ }
+ 
++#[cfg(feature = "ocr")]
+ /// Fields on a scanned paper form are found from its lines and boxes, wherever the page turns
+ /// them, and named from the labels when text recognition is installed.
+ #[test]
+@@ -6516,6 +6586,7 @@ fn actions_run_their_steps_on_files() {
+     assert!(actions::run_on(&custom, "bad.pdf", Arc::new(b"nope".to_vec()), |_, _| {}).is_err());
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A removal step that fails (here: a signed file can't be rewritten without its hidden data)
+ /// fails the action, so the file is not passed on as cleaned.
+ #[test]
+@@ -7088,6 +7159,7 @@ fn xfa_data_no_field_binds_to_survives_an_edit_and_save() {
+     assert!(doc.xfa_warnings.iter().any(|w| w.contains("structured content")));
+ }
+ 
++#[cfg(feature = "js")]
+ /// An XFA form's choice lists, signature and picture fields open as their kinds of field, take
+ /// values that scripts read, and are saved into the datasets.
+ #[test]
+@@ -7153,6 +7225,7 @@ fn xfa_choice_lists_signature_and_picture_fields_open_fill_script_and_save() {
+     assert!(taken[0].contains("langs") && !taken[0].contains("country"), "{}", taken[0]);
+ }
+ 
++#[cfg(feature = "js")]
+ /// A form's data exports, imports and takes pictures through the session, and what it holds
+ /// comes back the same.
+ #[test]
+@@ -7263,6 +7336,7 @@ fn xfa_data_import_on_a_static_form_replaces_every_value_and_pictures_reach_its_
+     assert!(xml.contains("<name>Bob</name>") && !xml.contains("<agree>1</agree>"), "{xml}");
+ }
+ 
++#[cfg(feature = "js")]
+ /// Importing data into a dynamic form adds and removes the rows of its repeating subform to
+ /// match, and the calculations over them run again.
+ #[test]
+@@ -7298,6 +7372,7 @@ fn xfa_data_import_adds_and_removes_rows_of_a_dynamic_form() {
+     assert!(String::from_utf8_lossy(&out).contains("<item>only</item>"));
+ }
+ 
++#[cfg(feature = "js")]
+ /// Hundreds of calculations, in JavaScript and FormCalc, run on opening in one engine, and a
+ /// change recalculates them in one more. The time limits are raised so that a busy machine
+ /// does not stop them; the next test checks that the limits stop them.
+@@ -7334,6 +7409,7 @@ fn hundreds_of_xfa_calculations_run_in_one_engine() {
+     eprintln!("recalculated after a change in {:?}", started.elapsed());
+ }
+ 
++#[cfg(feature = "js")]
+ /// The time the scripts of an opening share stops the calculations it has no time for, and
+ /// says how many were skipped; a change's scripts are stopped the same way.
+ #[test]
+@@ -7356,6 +7432,7 @@ fn the_xfa_open_budget_stops_the_calculations_it_has_no_time_for() {
+     assert_eq!(pdfcraft_js::xfa_session::engines_started(), engines, "no script ran, so no engine started");
+ }
+ 
++#[cfg(feature = "js")]
+ /// The scripts of one event share the form as the engine holds it: a failed script's
+ /// half-done writes reach nobody, and a script reads the saved value a choice list was given
+ /// by its shown text.
+@@ -7387,6 +7464,7 @@ fn xfa_scripts_of_one_event_see_the_form_as_the_engine_holds_it() {
+     assert_eq!(value(&s, "summary"), vec!["Country: CA".to_string()]);
+ }
+ 
++#[cfg(feature = "js")]
+ /// A row of dates worked out the way leave forms do it: the calculation checks that the raw value
+ /// is a whole ISO date, then adds days to the date as `formattedValue` shows it (`YYYYMMDD`).
+ #[test]
+@@ -7491,6 +7569,7 @@ fn xfa_structured_data_whitespace_edits_survive_without_stale_relayout() {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// A script that fails partway keeps what it did before the error, as JavaScript does: a form
+ /// whose check box opens the next boxes and then trips over an object the form no longer has
+ /// still opens them (DA Form 31's leave types).
+@@ -7511,6 +7590,7 @@ fn an_xfa_script_that_fails_partway_keeps_what_it_changed_before_the_error() {
+     s.apply(id, Edit::SetFieldValue { name: "leave".into(), value: FieldValue::Check(true) }).expect("can be checked now");
+ }
+ 
++#[cfg(feature = "js")]
+ /// A scripted form end to end: initialize and calculate on open, recalculation after a change,
+ /// a failing validation's message, buttons that add and remove rows and show messages, a check
+ /// box that shows a subform (undoable), FormCalc, and a save and reopen that keep it all.
+@@ -7527,6 +7607,7 @@ fn repeated_xfa_print_buttons_run_their_click_script() {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// An XFA form's scripts initialize, calculate, validate, show subforms and add and remove rows,
+ /// with undo and save/reopen.
+ #[test]
+@@ -7595,6 +7676,7 @@ fn xfa_scripts_initialize_calculate_validate_toggle_and_add_rows() {
+     assert!(!d2.dirty);
+ }
+ 
++#[cfg(feature = "js")]
+ /// A repeating table inside an area of a positioned page (as in real Designer forms): every
+ /// row is laid out, the values Adobe wrote (under the area's parent: areas are
+ /// not data scopes) are read, a FormCalc total over all rows computes, and what is filled here
+@@ -7635,6 +7717,7 @@ fn xfa_rows_in_areas_are_laid_out_read_calculated_and_written_where_adobe_binds_
+     assert_eq!((v2("days_2"), v2("rest")), ("2".into(), "29".into()));
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn a_value_a_script_sets_reaches_every_field_bound_to_the_same_data_node() {
+     // `carried` inside the area and a second `carried` outside it bind to one data node (areas
+@@ -7697,6 +7780,7 @@ fn a_value_a_script_sets_reaches_every_field_bound_to_the_same_data_node() {
+     );
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn flattening_an_xfa_form_bakes_its_pages_and_takes_the_xfa_out() {
+     let data = "<form><page1><country>JP</country><langs>English\nSpanish</langs></page1></form>";
+@@ -7732,6 +7816,7 @@ fn flattening_an_xfa_form_bakes_its_pages_and_takes_the_xfa_out() {
+     assert_eq!(s.get(id).unwrap().info.xfa, Some(pdfcraft_render::Xfa::Dynamic));
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn a_dynamic_xfa_form_that_was_never_laid_out_keeps_its_xfa_and_the_user_is_told_what_went() {
+     // A template that can't be read: the form keeps its placeholder page and its XFA.
+@@ -7765,6 +7850,7 @@ fn a_dynamic_xfa_form_that_was_never_laid_out_keeps_its_xfa_and_the_user_is_told
+     assert_eq!(s.get(id).unwrap().info.xfa, Some(pdfcraft_render::Xfa::Dynamic));
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn an_xfa_form_converts_to_a_static_form_that_keeps_its_fields() {
+     let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&pdfcraft_xfa::fixtures::scripted_template()));
+@@ -7804,6 +7890,7 @@ fn an_xfa_form_converts_to_a_static_form_that_keeps_its_fields() {
+     assert_eq!(value(&s, id, "total"), vec!["15".to_string()]);
+ }
+ 
++#[cfg(feature = "js")]
+ /// A dynamic XFA form scripted in FormCalc runs as the JavaScript one does.
+ #[test]
+ fn dynamic_xfa_forms_run_formcalc_scripts() {
+@@ -7848,6 +7935,7 @@ fn dynamic_xfa_forms_run_formcalc_scripts() {
+     assert!(d2.form.iter().any(|f| f.name == "note"));
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn hostile_formcalc_scripts_cannot_hang_or_bloat_the_document() {
+     let tpl = pdfcraft_xfa::fixtures::formcalc_template()
+@@ -7875,6 +7963,7 @@ f(1)</script>",
+     assert!(started.elapsed() < std::time::Duration::from_secs(60), "{:?}", started.elapsed());
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn a_formcalc_calculate_result_is_cut_before_it_is_saved() {
+     let tpl = pdfcraft_xfa::fixtures::formcalc_template()
+@@ -7891,6 +7980,7 @@ fn a_formcalc_calculate_result_is_cut_before_it_is_saved() {
+     assert!(words(&s, id2).chars().count() <= 65_536);
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn xfa_scripts_stay_off_with_javascript_off() {
+     let bytes = Arc::new(pdfcraft_xfa::fixtures::shell(&pdfcraft_xfa::fixtures::scripted_template()));
+@@ -7903,6 +7993,7 @@ fn xfa_scripts_stay_off_with_javascript_off() {
+     assert!(!s.get(id).unwrap().xfa_scripts_off(), "the preference, not a script that ran away");
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn hostile_xfa_scripts_cannot_hang_or_bloat_the_document() {
+     // A calculate script that adds a row every time it runs, a click script that loops on
+@@ -7927,6 +8018,7 @@ fn hostile_xfa_scripts_cannot_hang_or_bloat_the_document() {
+     assert!(started.elapsed() < std::time::Duration::from_secs(60), "{:?}", started.elapsed());
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn xfa_scripts_can_remove_rows_twice_and_reset_fields_by_name() {
+     let tpl = pdfcraft_xfa::fixtures::scripted_template()
+@@ -7969,6 +8061,7 @@ fn datasets_streams(bytes: &Arc<Vec<u8>>) -> usize {
+         .count()
+ }
+ 
++#[cfg(feature = "js")]
+ /// Hostile scripts run on open are merged, capped, kept from printing, saving and opening links,
+ /// and noted.
+ #[test]
+@@ -8005,6 +8098,7 @@ fn hostile_xfa_open_scripts_are_merged_capped_kept_from_printing_and_noted() {
+     assert!(out.console.iter().any(|c| c.contains("only print when a button is clicked")), "{:?}", out.console);
+ }
+ 
++#[cfg(feature = "js")]
+ /// An XFA button's message boxes reach the viewer with their titles, icons and buttons, from
+ /// JavaScript (`xfa.host.messageBox`, `app.alert` in its own order) and FormCalc alike, every
+ /// one of them and in order.
+@@ -8035,6 +8129,7 @@ fn xfa_message_boxes_keep_their_title_icon_and_buttons() {
+     assert_eq!(o.alerts, vec![titled("Too many", "Limits", MessageIcon::Warning, MessageButtons::OkCancel)]);
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn runaway_xfa_calculations_at_open_end_quickly_with_a_report() {
+     // Nested loops in one frame stop at the loop limit; loops in nested calls (that limit is per
+@@ -8300,6 +8395,7 @@ fn free_text_without_appearance() -> Arc<Vec<u8>> {
+     Arc::new(bytes)
+ }
+ 
++#[cfg(feature = "sign")]
+ /// The CLI renders what the app shows with no trusted certificates: a named-layer signature in
+ /// the state it has then (validity unknown), not the "not verified" its file stores. The source
+ /// is not changed.
+@@ -8316,6 +8412,7 @@ fn cli_display_draws_signature_states_as_the_app_does_without_trust() {
+     assert!(pixels_near(&page.rgba, [255, 214, 51]) < 50, "the stored question mark is not");
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A layer recognised but too small to draw an icon in (a side so small the icon's scale rounds to
+ /// zero) changes nothing, so the CLI renders the source, as the app does.
+ #[test]
+@@ -9169,6 +9266,7 @@ fn a_recovered_page_tree_opens_unmodified_and_edits_the_pages_shown() {
+     assert_eq!(s.get(id).unwrap().info.pages.iter().map(|p| p.rotation).collect::<Vec<_>>(), [0, 90]);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn a_signed_document_rebuilt_from_object_headers_refuses_edits() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+@@ -9203,6 +9301,17 @@ fn signed_field_named(len: usize) -> Vec<u8> {
+     ])
+ }
+ 
++/// Without the `sign` feature nothing is verified, but a signed file is still recognised, so it is
++/// not rewritten and its signatures are not broken.
++#[cfg(not(feature = "sign"))]
++#[test]
++fn a_signed_file_still_blocks_a_full_rewrite_without_the_sign_feature() {
++    let (mut s, id) = open_signed_field_named(8);
++    assert!(s.get(id).unwrap().is_signed());
++    assert_eq!(s.save_full_bytes(id).unwrap_err(), EditError::Signed);
++    assert!(matches!(s.apply(id, Edit::Sanitize), Err(EditError::SignedRewrite(_))));
++}
++
+ /// A PDF of `objs`, numbered from 1, with a cross-reference table.
+ fn pdf_of(objs: &[String]) -> Vec<u8> {
+     let mut out = b"%PDF-1.7\n".to_vec();
+@@ -9226,6 +9335,7 @@ fn open_signed_field_named(len: usize) -> (Session, DocId) {
+     (s, id)
+ }
+ 
++#[cfg(feature = "sign")]
+ /// The cap's boundary as the engine meets it: a 4096-byte name is read, and its signature blocks a
+ /// full rewrite.
+ #[test]
+@@ -9237,6 +9347,7 @@ fn a_signature_named_at_the_cap_is_listed_and_blocks_a_full_rewrite() {
+     assert_eq!(s.save_full_bytes(id).unwrap_err(), EditError::Signed);
+ }
+ 
++#[cfg(feature = "sign")]
+ /// One byte past the cap the field goes unread: the list says so, and a full rewrite is still
+ /// refused.
+ #[test]
+@@ -9249,6 +9360,7 @@ fn a_signature_named_one_byte_past_the_cap_still_blocks_a_full_rewrite() {
+     assert_eq!(s.save_full_bytes(id).unwrap_err(), EditError::Signed);
+ }
+ 
++#[cfg(feature = "sign")]
+ /// A signed field behind a kid with no /T: one merged with its widget under a named field that
+ /// isn't a signature field (the walk can't list it, so its row is the unread one), and one under a
+ /// node with no /T (listed by its full name). Either way the document is signed, and neither a full
+@@ -9287,6 +9399,7 @@ fn signed_fields_behind_kids_without_a_name_block_a_full_rewrite() {
+     }
+ }
+ 
++#[cfg(feature = "sign")]
+ /// The walk stops short of a signed field, so a signature may go unlisted; the document still
+ /// counts as signed, and each guard against rewriting a signed document holds.
+ #[test]
+@@ -9296,24 +9409,28 @@ fn a_signature_the_field_walk_passes_over_still_counts_as_signed() {
+     assert!(doc.is_signed(), "{:?}", doc.signatures);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn a_full_rewrite_is_refused_when_the_field_walk_passes_a_signature_over() {
+     let (s, id) = open_signed_field_named(64 << 10);
+     assert_eq!(s.save_full_bytes(id).unwrap_err(), EditError::Signed);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn optimizing_is_refused_when_the_field_walk_passes_a_signature_over() {
+     let (s, id) = open_signed_field_named(64 << 10);
+     assert!(matches!(s.optimize_job(id, &optimize::Settings::default(), &[]), Err(EditError::Signed)));
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn a_rewriting_edit_is_refused_when_the_field_walk_passes_a_signature_over() {
+     let (mut s, id) = open_signed_field_named(64 << 10);
+     assert!(matches!(s.apply(id, Edit::Sanitize), Err(EditError::SignedRewrite(_))));
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn an_action_appends_to_a_file_whose_field_walk_passes_a_signature_over() {
+     let bytes = Arc::new(signed_field_named(64 << 10));
+@@ -9403,6 +9520,7 @@ fn marking_a_figure_decorative_keeps_other_page_streams() {
+     assert_eq!(stream(&doc, figure_ref.num).dict.get(b"VendorKey").and_then(pdfcraft_cos::Object::as_int), Some(7));
+ }
+ 
++#[cfg(feature = "print")]
+ /// Print as image (Acrobat's Advanced Print Setup): the print-ready PDF carries each page as a
+ /// picture, the size of the page, with no text left to search; in grayscale the pictures are
+ /// grey. A page used on several sheets is rendered once.
+@@ -9956,6 +10074,7 @@ fn acroform_interaction_benchmark() {
+     assert_eq!(value(&s, "field3128"), ["0"]);
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn checkbox_and_rank_changes_recalculate_ordered_dependents() {
+     let mut s = Session::new();
+@@ -9992,6 +10111,7 @@ fn checkbox_and_rank_changes_recalculate_ordered_dependents() {
+     assert_eq!(appearance(&s), before, "unchanged calculated values keep their appearance streams");
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn dynamic_calculation_reads_and_side_effects_reach_later_fields() {
+     use pdfcraft_cos::{Dict, Object, PdfString};
+@@ -10022,6 +10142,7 @@ fn dynamic_calculation_reads_and_side_effects_reach_later_fields() {
+     assert!(s.take_js_output(id).errors.is_empty());
+ }
+ 
++#[cfg(feature = "js")]
+ #[test]
+ fn scripted_display_changes_survive_warm_cache_and_new_edit() {
+     use pdfcraft_forms::{FieldEvent, Scripts};
+@@ -10129,6 +10250,7 @@ fn a_date_typed_by_another_of_an_xfa_fields_edit_patterns_is_kept_in_its_first()
+     assert_eq!(data.text_at(&pdfcraft_xfa::som_to_path("form[0].leave[0]")), Some("2026-11-08"));
+ }
+ 
++#[cfg(feature = "js")]
+ /// A date the field's own scripts refuse is not tried again in another of an XFA date field's
+ /// patterns: only a date its format refuses is, which happens before any script runs, so the
+ /// scripts run once. This validate script counts its runs in `name` and accepts on its second.
+@@ -10147,6 +10269,7 @@ fn a_date_its_validate_script_refuses_is_not_tried_again() {
+     assert!(value(&s, "name").is_empty(), "nothing the refused run changed is kept: {:?}", value(&s, "name"));
+ }
+ 
++#[cfg(feature = "js")]
+ /// An XFA button's click script may show the attachments panel; a text field's exit script
+ /// asking the same is noted on the console and ignored.
+ #[test]
+@@ -10176,6 +10299,7 @@ fn an_xfa_button_may_show_a_side_panel_and_other_events_may_not() {
+     assert!(out.console.iter().any(|c| c.contains("show a side panel")), "{:?}", out.console);
+ }
+ 
++#[cfg(feature = "js")]
+ /// A validate script that asks for Save As and a side panel gets neither, with a console note
+ /// for each; a button's script may still open Save As.
+ #[test]
+@@ -10770,6 +10894,7 @@ fn test_added_image_transform_reflections_with_rotation() {
+     }
+ }
+ 
++#[cfg(feature = "print")]
+ /// ISO 32000-2 Table 192, 12.7.5.2.3 and Table 228 (Comb): a check box, a push button, a comb
+ /// field the file leaves to the viewer. The page as displayed and printed as an image shows the
+ /// check box's caption symbol in its text colour, the button's grey face and the comb's cells in
+@@ -10940,6 +11065,7 @@ fn pdf_with_annots(annots: &[&[u8]]) -> Vec<u8> {
+     bytes
+ }
+ 
++#[cfg(feature = "print")]
+ /// ISO 32000-2 Table 224 (`/NeedAppearances`) and Table 192 (`/MK /CA`): a form that leaves its
+ /// appearances to the viewer shows its check boxes and radio buttons drawn from `/MK`, over the
+ /// filled squares the file carries: a checked box its check mark (ZapfDingbats `4`), an unchecked
+@@ -11116,6 +11242,7 @@ fn saving_after_deleting_pages_rewrites_the_file_without_them() {
+     assert_eq!(page_texts(&again, id2), ["Page 1", "Page 6"]);
+ }
+ 
++#[cfg(feature = "sign")]
+ #[test]
+ fn saving_after_deleting_pages_from_a_signed_file_stays_incremental() {
+     let p12 = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../sign/tests/data/ec-p256.p12")).unwrap();
+diff --git a/crates/engine/src/xfa.rs b/crates/engine/src/xfa.rs
+index f20c82f6..3fed857d 100644
+--- a/crates/engine/src/xfa.rs
++++ b/crates/engine/src/xfa.rs
+@@ -5,30 +5,43 @@
+ //! presence and access changes become overrides kept in the PDF, added or removed rows change
+ //! the datasets, and any of those lays the form out again.
+ 
++#[cfg(feature = "js")]
+ use std::collections::HashMap;
+ use std::sync::Arc;
+ 
++#[cfg(feature = "js")]
+ use pdfcraft_js::xfa::{XfaDoc, XfaEffect, XfaEvent, XfaKind, XfaNode};
++#[cfg(feature = "js")]
+ use pdfcraft_js::xfa_session::{Script, XfaSession};
+ use pdfcraft_xfa::model::Template;
++#[cfg(feature = "js")]
+ use pdfcraft_xfa::{FormNode, LiveForm, NodeKind, ScriptEvent};
+ 
+ use crate::js::JsOutput;
++#[cfg(feature = "js")]
+ use crate::js::Request;
+ 
++#[cfg(feature = "js")]
+ /// Most scripts run for one event (calculates of a whole form, say).
+ const MAX_SCRIPTS_PER_EVENT: usize = 2_000;
++#[cfg(feature = "js")]
+ /// Most times the form is laid out again for one event (a script adding rows in a loop).
+ const MAX_RELAYOUTS_PER_EVENT: usize = 50;
++#[cfg(feature = "js")]
+ /// Most message boxes, console lines and errors kept for one event.
+ const MAX_ALERTS_PER_EVENT: usize = 100;
++#[cfg(feature = "js")]
+ const MAX_CONSOLE_PER_EVENT: usize = 1_000;
++#[cfg(feature = "js")]
+ const MAX_ERRORS_PER_EVENT: usize = 100;
++#[cfg(feature = "js")]
+ /// Time the scripts of one event may take in all before the rest are skipped: opening (and
+ /// the calculations every change runs) is held tighter than a click.
+ const OPEN_BUDGET_MS: u64 = 3_000;
++#[cfg(feature = "js")]
+ const EVENT_BUDGET_MS: u64 = 5_000;
+ 
++#[cfg(feature = "js")]
+ /// Engine limits for one script: initialize, calculate and validate scripts run without the
+ /// user asking (on open, on every change), so they get fewer loop iterations than a click.
+ fn limits_for(activity: &str) -> pdfcraft_js::Limits {
+@@ -38,6 +51,7 @@ fn limits_for(activity: &str) -> pdfcraft_js::Limits {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// Longest one script may run before it is abandoned (it can't be interrupted, only left
+ /// behind): scripts that run unasked are held tighter than a click's.
+ fn timeout_for(activity: &str) -> std::time::Duration {
+@@ -47,6 +61,7 @@ fn timeout_for(activity: &str) -> std::time::Duration {
+     })
+ }
+ 
++#[cfg(feature = "js")]
+ /// Requests only a click may make (anything else asking is noted and ignored).
+ fn click_only(e: &XfaEffect) -> Option<&'static str> {
+     match e {
+@@ -59,6 +74,7 @@ fn click_only(e: &XfaEffect) -> Option<&'static str> {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// A wall clock where there is one (not in the browser build, where the script and relayout
+ /// caps alone bound an event).
+ #[derive(Clone, Copy)]
+@@ -68,6 +84,7 @@ struct Clock {
+     budget_ms: u64,
+ }
+ 
++#[cfg(feature = "js")]
+ impl Clock {
+     fn start(budget_ms: u64) -> Self {
+         Clock {
+@@ -121,6 +138,7 @@ impl Changes {
+ }
+ 
+ /// What a run of the form's scripts shares with the edit around it.
++#[cfg_attr(not(feature = "js"), allow(dead_code))]
+ pub(crate) struct XfaRun<'a> {
+     pub page_count: usize,
+     pub out: &'a mut JsOutput,
+@@ -134,6 +152,7 @@ pub(crate) struct XfaRun<'a> {
+     pub time_scale: u32,
+ }
+ 
++#[cfg(feature = "js")]
+ /// The live form node `n`, with its descendants, as the script engine's snapshot of it.
+ fn to_js(n: &FormNode) -> XfaNode {
+     XfaNode {
+@@ -159,6 +178,7 @@ fn to_js(n: &FormNode) -> XfaNode {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ fn find_container<'a>(n: &'a FormNode, som: &str, depth: usize) -> Option<&'a FormNode> {
+     if depth > 64 {
+         return None;
+@@ -169,11 +189,13 @@ fn find_container<'a>(n: &'a FormNode, som: &str, depth: usize) -> Option<&'a Fo
+     n.children.iter().find_map(|c| find_container(c, som, depth + 1))
+ }
+ 
++#[cfg(feature = "js")]
+ fn count_instances(root: &FormNode, parent_som: &str, name: &str) -> usize {
+     let parent = if parent_som.is_empty() { Some(root) } else { find_container(root, parent_som, 0) };
+     parent.map_or(0, |p| p.children.iter().filter(|c| c.name == name).count())
+ }
+ 
++#[cfg(feature = "js")]
+ /// An instance SOM (`…table[0].row[2]`) split into its parent's data path (areas left out,
+ /// see [`pdfcraft_xfa::data_path`]) and SOM, its name and its index.
+ fn split_instance(tpl: &Template, som: &str) -> Option<(pdfcraft_xfa::DataPath, String, String, usize)> {
+@@ -183,6 +205,7 @@ fn split_instance(tpl: &Template, som: &str) -> Option<(pdfcraft_xfa::DataPath,
+     Some((path, parent_som, name, index))
+ }
+ 
++#[cfg(feature = "js")]
+ /// A SOM path without its indexes (`form.page1.qty`), for matching names scripts pass.
+ fn plain_som(som: &str) -> String {
+     let mut out = String::with_capacity(som.len());
+@@ -198,6 +221,7 @@ fn plain_som(som: &str) -> String {
+     out
+ }
+ 
++#[cfg(feature = "js")]
+ /// Does `name` from a script (`qty`, `page1.qty`, `xfa.form.form.page1.qty`, or a container
+ /// such as `table`) name this SOM or one of its ancestors?
+ fn som_matches(som: &str, name: &str) -> bool {
+@@ -209,6 +233,7 @@ fn som_matches(som: &str, name: &str) -> bool {
+     !want.is_empty() && have.windows(want.len()).any(|w| w == want.as_slice())
+ }
+ 
++#[cfg(feature = "js")]
+ /// A generated field as the runner tracks it: kind, value and on state.
+ #[derive(Clone)]
+ struct FieldInfo {
+@@ -219,6 +244,7 @@ struct FieldInfo {
+     multi: bool,
+ }
+ 
++#[cfg(feature = "js")]
+ fn field_infos(doc: &pdfcraft_cos::Document) -> HashMap<String, FieldInfo> {
+     pdfcraft_forms::fields(doc)
+         .into_iter()
+@@ -230,6 +256,7 @@ fn field_infos(doc: &pdfcraft_cos::Document) -> HashMap<String, FieldInfo> {
+         .collect()
+ }
+ 
++#[cfg(feature = "js")]
+ /// The data text of a field's value.
+ fn data_text(info: &FieldInfo) -> String {
+     match info.kind {
+@@ -244,6 +271,7 @@ fn data_text(info: &FieldInfo) -> String {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ /// Runs the scripts of one event (opening, a change, a click) against one document: what
+ /// they change is kept in memory (data, field values, overrides) and written once, when the
+ /// event ends or the form has to be laid out again.
+@@ -277,6 +305,7 @@ struct Runner<'a, 'b> {
+     changes: Changes,
+ }
+ 
++#[cfg(feature = "js")]
+ impl<'a, 'b> Runner<'a, 'b> {
+     fn new(doc: &'a mut pdfcraft_cos::Document, tpl: &'a Template, run: &'a mut XfaRun<'b>, budget_ms: u64) -> Self {
+         let data = pdfcraft_xfa::data_of(doc);
+@@ -743,6 +772,7 @@ impl<'a, 'b> Runner<'a, 'b> {
+     }
+ }
+ 
++#[cfg(feature = "js")]
+ impl Runner<'_, '_> {
+     /// The live form kept up to date in place must be the form a fresh build gives: every
+     /// field's SOM, value, presence and access (tests run this before every script and at the
+@@ -766,7 +796,7 @@ impl Runner<'_, '_> {
+ }
+ 
+ /// Every field's (SOM, value, presence, access), in document order.
+-#[cfg(test)]
++#[cfg(all(test, feature = "js"))]
+ fn collect_fields(n: &FormNode, out: &mut Vec<(String, String, String, String)>, depth: usize) {
+     if depth > 64 {
+         return;
+@@ -822,6 +852,7 @@ pub(crate) fn relayout_changed_text(
+     Ok(Some(report.warnings))
+ }
+ 
++#[cfg(feature = "js")]
+ /// On open: initialize scripts, then calculations. Returns what they changed.
+ pub(crate) fn on_open(doc: &mut pdfcraft_cos::Document, tpl: &Template, run: &mut XfaRun) -> Result<Changes, String> {
+     let mut r = Runner::new(doc, tpl, run, OPEN_BUDGET_MS);
+@@ -833,6 +864,7 @@ pub(crate) fn on_open(doc: &mut pdfcraft_cos::Document, tpl: &Template, run: &mu
+     r.finish()
+ }
+ 
++#[cfg(feature = "js")]
+ /// After fields `names` took new values: each one's change, exit and validate scripts, then
+ /// the calculations once (or only those, after a reset). A validate script that answers false,
+ /// or fails, shows its message; the value stays, as Acrobat marks the field invalid rather
+@@ -857,6 +889,7 @@ pub(crate) fn on_changes(doc: &mut pdfcraft_cos::Document, tpl: &Template, names
+     r.finish().map(|_| ())
+ }
+ 
++#[cfg(feature = "js")]
+ /// The form's data changed outside its scripts (a data file imported, a picture chosen): lay
+ /// the form out again from the data, then, when `calculate`, run every calculation.
+ pub(crate) fn on_data_replaced(doc: &mut pdfcraft_cos::Document, tpl: &Template, calculate: bool, run: &mut XfaRun) -> Result<(), String> {
+@@ -868,6 +901,28 @@ pub(crate) fn on_data_replaced(doc: &mut pdfcraft_cos::Document, tpl: &Template,
+     r.finish().map(|_| ())
+ }
+ 
++// Without the `js` feature no XFA script runs; the form is shown as laid out, as when scripting
++// is turned off.
++#[cfg(not(feature = "js"))]
++pub(crate) fn on_open(_doc: &mut pdfcraft_cos::Document, _tpl: &Template, _run: &mut XfaRun) -> Result<Changes, String> {
++    Ok(Changes::default())
++}
++
++#[cfg(not(feature = "js"))]
++pub(crate) fn on_changes(_doc: &mut pdfcraft_cos::Document, _tpl: &Template, _names: &[String], _run: &mut XfaRun) -> Result<(), String> {
++    Ok(())
++}
++
++#[cfg(not(feature = "js"))]
++pub(crate) fn on_data_replaced(_doc: &mut pdfcraft_cos::Document, _tpl: &Template, _calculate: bool, _run: &mut XfaRun) -> Result<(), String> {
++    Ok(())
++}
++
++#[cfg(not(feature = "js"))]
++pub(crate) fn on_event(_doc: &mut pdfcraft_cos::Document, _tpl: &Template, _som: &str, _activity: &str, _run: &mut XfaRun) -> Result<(), String> {
++    Err("scripts are not built into this version".into())
++}
++
+ /// A text value typed into the laid-out XFA date field `name` by another of its edit picture's
+ /// patterns, written in the first ([`pdfcraft_xfa::typed_date`]); `None` for anything else.
+ /// `tpl` is the template the scripts use, when they run; otherwise it is read from `doc`.
+@@ -890,6 +945,7 @@ pub(crate) fn typed_date(
+     pdfcraft_xfa::typed_date(tpl, &som, text).map(pdfcraft_forms::FieldValue::Text)
+ }
+ 
++#[cfg(feature = "js")]
+ /// A button's click script (or any event, by SOM path and activity), then calculations.
+ pub(crate) fn on_event(doc: &mut pdfcraft_cos::Document, tpl: &Template, som: &str, activity: &str, run: &mut XfaRun) -> Result<(), String> {
+     let mut r = Runner::new(doc, tpl, run, EVENT_BUDGET_MS);
+@@ -906,6 +962,7 @@ pub(crate) fn on_event(doc: &mut pdfcraft_cos::Document, tpl: &Template, som: &s
+     r.finish().map(|_| ())
+ }
+ 
++#[cfg(feature = "js")]
+ /// The SOM path of a generated field whose template has a click script.
+ pub(crate) fn clickable_som(doc: &pdfcraft_cos::Document, tpl: &Template, field: &pdfcraft_forms::Field) -> Option<String> {
+     // Page-master copies have distinct PDF field names but share a SOM path. Reversing
+@@ -919,6 +976,14 @@ pub(crate) fn clickable_som(doc: &pdfcraft_cos::Document, tpl: &Template, field:
+ /// The parsed template of a laid-out XFA form, kept for the document's life, when it has
+ /// scripts to run (`None` otherwise: nothing about the form is scripted).
+ pub(crate) fn template(doc: &pdfcraft_cos::Document) -> Option<Arc<Template>> {
++    // Without the `js` feature there are no scripts to run, which is how a session with JavaScript
++    // turned off sees a form: no template is kept.
++    #[cfg(not(feature = "js"))]
++    {
++        let _ = doc;
++        None
++    }
++    #[cfg(feature = "js")]
+     pdfcraft_xfa::template_of(doc).ok().filter(pdfcraft_xfa::has_scripts).map(Arc::new)
+ }
+ 
+@@ -937,7 +1002,7 @@ pub(crate) fn mark_script_buttons(doc: &pdfcraft_cos::Document, fields: &mut [pd
+     }
+ }
+ 
+-#[cfg(test)]
++#[cfg(all(test, feature = "js"))]
+ mod tests {
+     use super::*;
+ 
+diff --git a/crates/engine/tests/form_date_language.rs b/crates/engine/tests/form_date_language.rs
+index 1d4293e1..a753818c 100644
+--- a/crates/engine/tests/form_date_language.rs
++++ b/crates/engine/tests/form_date_language.rs
+@@ -1,5 +1,6 @@
+ //! Form date fields name months in the app's date language (#5303). Its own test binary: the
+ //! names are process-wide, so other tests must not see them change, and its tests take turns.
++#![cfg(feature = "js")]
+ 
+ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+ 
+diff --git a/crates/engine/tests/it/main.rs b/crates/engine/tests/it/main.rs
+index 8d902660..d288c173 100644
+--- a/crates/engine/tests/it/main.rs
++++ b/crates/engine/tests/it/main.rs
+@@ -7,6 +7,7 @@ mod support {
+ mod document_fonts;
+ mod form_rotation;
+ mod marked_content_isolation;
++#[cfg(feature = "ocr")]
+ mod ocr_edit;
+ mod office_export_images;
+ mod private_image_resize;

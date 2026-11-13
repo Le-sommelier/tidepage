@@ -1,0 +1,14 @@
+third_party/
+target/
+*.so
+.gradle
+local.properties
+.claude/worktrees/
+third_party
+rust/pdfa-ffi/golden/*.actual.golden
+rust/pdfa-ffi/golden/*.diff.ppm
+
+# Signing material never belongs in the repository.
+*.jks
+*.keystore
+keystore.properties

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tools_back">Back</string>
+    <string name="tools_dismiss">Dismiss</string>
+
+    <!-- Merge -->
+    <string name="merge_title">Merge PDFs</string>
+    <string name="merge_empty">Add two or more PDF files. They are joined in the order shown here.</string>
+    <string name="merge_add">Add PDFs</string>
+    <string name="merge_action">Merge</string>
+    <string name="merge_adding">Reading your files</string>
+    <string name="merge_need_two">Add at least two files to merge.</string>
+    <string name="merge_fix_first">Fix or remove the files marked with a problem first.</string>
+    <string name="merge_pages">%1$d pages</string>
+    <string name="merge_pages_one">1 page</string>
+    <string name="merge_pages_used">%1$d of %2$d pages used</string>
+    <string name="merge_move_up">Move file %1$d up</string>
+    <string name="merge_move_down">Move file %1$d down</string>
+    <string name="merge_remove">Remove file %1$d</string>
+    <string name="merge_range_label">Pages to use (all if empty), e.g. 1-3, 6</string>
+    <string name="merge_password_label">Password for this file</string>
+    <string name="merge_unlock">Unlock</string>
+    <string name="merge_status_checking">Checking</string>
+    <string name="merge_status_password">Protected. Enter its password to use it.</string>
+    <string name="merge_status_wrong">Wrong password. Try again.</string>
+    <string name="merge_status_not_pdf">This is not a PDF file. Remove it.</string>
+    <string name="merge_status_too_large">This file is over 128 MB. Remove it.</string>
+    <string name="merge_status_unreadable">This file could not be read. Remove it.</string>
+    <string name="merge_status_damaged">This file is damaged. Remove it.</string>
+    <string name="merge_skipped">Some files were left out: the list is limited to 50 files and 256 MB together.</string>
+    <string name="merge_working">Merging your files</string>
+    <string name="merge_working_detail">Large files can take a while. You can cancel.</string>
+    <string name="merge_cancel">Cancel</string>
+    <string name="merge_cancelled">Cancelled. Nothing was written. Stopping restarts the PDF engine, which is normal: nothing was lost and your list is unchanged.</string>
+    <string name="merge_done">Merged: %1$d pages</string>
+    <string name="merge_done_detail">The merged file is ready. Choose where to save it. Your original files are not changed.</string>
+    <string name="merge_save">Save merged file</string>
+    <string name="merge_saving">Saving</string>
+    <string name="merge_save_failed">The merged file could not be written there. Choose another place, or try again.</string>
+    <string name="merge_saved">Saved. Your original files are unchanged.</string>
+    <string name="merge_open">Open merged file</string>
+    <string name="merge_start_over">Start over</string>
+
+    <!-- Problems shared by merge and split -->
+    <string name="problem_too_large">That is too large for the PDF engine. Try fewer or smaller files or pages. Nothing was written.</string>
+    <string name="problem_not_permitted">The protection of a file does not allow pages to be copied out of it. Nothing was written.</string>
+    <string name="problem_timeout">This took too long and was stopped. Nothing was written. Try fewer files or pages.</string>
+    <string name="problem_engine_died">The PDF engine stopped unexpectedly. Nothing was written and your work is unchanged. Try again.</string>
+    <string name="problem_damaged">A file is damaged or is not a valid PDF. Nothing was written.</string>
+    <string name="problem_failed">That did not work. Nothing was written.</string>
+
+    <!-- Typed input -->
+    <string name="input_empty">Type the pages to use, for example 1-3, 6.</string>
+    <string name="input_syntax">Use page numbers and ranges separated by commas, for example 1-3, 6.</string>
+    <string name="input_zero">Pages start at 1.</string>
+    <string name="input_reversed">A range must go upwards, like 3-5, not 5-3.</string>
+    <string name="input_out_of_bounds">That page does not exist. This document has %1$d pages.</string>
+    <string name="input_overlap">A page is listed more than once. Each page can appear only once.</string>
+    <string name="input_too_many">That list is too long.</string>
+    <string name="input_n_small">Enter a number of 1 or more.</string>
+    <string name="input_n_big">Enter a number smaller than the %1$d pages of this document.</string>
+    <string name="input_first_page">Page 1 always starts the first part. Start from page 2.</string>
+    <string name="input_duplicate">A page is listed twice.</string>
+    <string name="input_too_many_parts">That would make more than 1000 files. Choose a larger number.</string>
+
+    <!-- Split or extract -->
+    <string name="split_title">Split or extract</string>
+    <string name="split_mode_extract">Extract pages</string>
+    <string name="split_mode_every">Split every N pages</string>
+    <string name="split_mode_before">Split before pages</string>
+    <string name="split_pages_label">Pages to extract, e.g. 1-3, 6</string>
+    <string name="split_every_label">Pages per part</string>
+    <string name="split_before_label">New part starts at pages, e.g. 4, 9</string>
+    <string name="split_hint_extract">The pages are copied into a new file. This document is not changed.</string>
+    <string name="split_hint_every">Each part is saved as part-01.pdf, part-02.pdf and so on, in a folder you choose.</string>
+    <string name="split_hint_before">Page 1 starts the first part. Each page you list starts a new one.</string>
+    <string name="split_preview_extract">%1$d pages will be extracted</string>
+    <string name="split_preview_parts">%1$d files will be made, from %2$s to %3$s</string>
+    <string name="split_action_extract">Extract pages</string>
+    <string name="split_action_split">Split</string>
+    <string name="split_working">Working</string>
+    <string name="split_cancelled">Cancelled. Nothing was written. Stopping restarts the PDF engine, which is normal: nothing was lost and your document is unchanged.</string>
+    <string name="split_ready_file">The new file is ready. Choose where to save it.</string>
+    <string name="split_ready_parts">%1$d files are ready. Choose a folder to save them in.</string>
+    <string name="split_save_file">Save the extracted file</string>
+    <string name="split_save_parts">Choose a folder and save</string>
+    <string name="split_saving_parts">Saving file %1$d of %2$d</string>
+    <string name="split_saving_file">Saving</string>
+    <string name="split_file_saved">Saved. This document is unchanged.</string>
+    <string name="split_file_failed">The file could not be written there. Choose another place, or try again.</string>
+    <string name="split_parts_saved">Saved %1$d files. This document is unchanged.</string>
+    <string name="split_parts_failed">Saved %1$d of %2$d files. Writing stopped at part %3$d. Check that the folder has room and can be written to, then try again.</string>
+    <string name="split_again">Back to the options</string>
+    <string name="split_close">Done</string>
+</resources>

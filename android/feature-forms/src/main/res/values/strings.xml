@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Field kinds, spoken before the name -->
+    <string name="forms_kind_text">Text field</string>
+    <string name="forms_kind_check">Check box</string>
+    <string name="forms_kind_radio">Option group</string>
+    <string name="forms_kind_button">Button</string>
+    <string name="forms_kind_combo">Drop-down list</string>
+    <string name="forms_kind_list">List</string>
+    <string name="forms_kind_signature">Signature field</string>
+
+    <!-- Field descriptions for TalkBack and the list: "Text field Name, required, empty" -->
+    <string name="forms_field_named">%1$s %2$s</string>
+    <string name="forms_desc_required">required</string>
+    <string name="forms_desc_read_only">read only</string>
+    <string name="forms_desc_empty">empty</string>
+    <string name="forms_desc_checked">checked</string>
+    <string name="forms_desc_not_checked">not checked</string>
+    <string name="forms_desc_none_selected">nothing selected</string>
+    <string name="forms_desc_value">%1$s</string>
+    <string name="forms_desc_current">selected for editing</string>
+    <string name="forms_desc_signature">%1$s, cannot be filled here</string>
+    <string name="forms_desc_button">%1$s, cannot be filled here</string>
+    <string name="forms_overlay_missing_marker">Required, still empty</string>
+
+    <!-- Editor -->
+    <string name="forms_editor_field_label">%1$s</string>
+    <string name="forms_editor_text_hint">Type here</string>
+    <string name="forms_editor_counter">%1$d of %2$d</string>
+    <string name="forms_editor_previous">Previous</string>
+    <string name="forms_editor_next">Next</string>
+    <string name="forms_editor_clear">Clear field</string>
+    <string name="forms_editor_done">Done</string>
+    <string name="forms_editor_checkbox">%1$s</string>
+    <string name="forms_editor_choose_one">Choose one</string>
+    <string name="forms_editor_choose_any">Choose any number</string>
+    <string name="forms_editor_no_options">This field has no choices to pick from.</string>
+    <string name="forms_editor_required_note">Required</string>
+    <string name="forms_editor_locked_read_only">This field is locked by the document. You can read it but not change it.</string>
+    <string name="forms_editor_locked_signature">Signatures cannot be added here.</string>
+    <string name="forms_editor_locked_button">This is a button in the document. It does nothing here.</string>
+    <string name="forms_selected">Selected</string>
+
+    <!-- Validation messages under a field -->
+    <plurals name="forms_issue_too_long">
+        <item quantity="one">This field allows only %1$d character.</item>
+        <item quantity="other">This field allows only %1$d characters.</item>
+    </plurals>
+    <string name="forms_issue_multiple">This field takes one choice only.</string>
+    <string name="forms_issue_unknown_option">That choice is not one this field offers.</string>
+
+    <!-- Problems -->
+    <string name="forms_problem_read_only">This field is locked and cannot be changed.</string>
+    <string name="forms_problem_not_fillable">This field cannot be filled in here.</string>
+    <string name="forms_problem_no_such_field">This field is no longer in the form.</string>
+    <string name="forms_problem_wrong_kind">That value does not fit this field.</string>
+    <string name="forms_problem_invalid_value">That value was not accepted.</string>
+    <string name="forms_problem_not_permitted">This document does not allow changes to its form.</string>
+    <string name="forms_problem_engine_restarted">The app had to restart its PDF engine. Reopen the document to go on.</string>
+    <string name="forms_problem_action_failed">That did not work. Please try again.</string>
+
+    <!-- Field list -->
+    <string name="forms_list_title">Form fields</string>
+    <string name="forms_list_empty">This document has no form fields.</string>
+    <string name="forms_list_clear_form">Clear form</string>
+    <string name="forms_list_value_empty">Empty</string>
+    <string name="forms_list_checked">Checked</string>
+    <string name="forms_list_not_checked">Not checked</string>
+    <string name="forms_list_required">Required</string>
+    <string name="forms_list_read_only">Read only</string>
+    <string name="forms_list_page">Page %1$d</string>
+    <plurals name="forms_list_missing_count">
+        <item quantity="one">%1$d required field is empty</item>
+        <item quantity="other">%1$d required fields are empty</item>
+    </plurals>
+
+    <!-- Clear form confirmation -->
+    <string name="forms_clear_title">Clear the whole form?</string>
+    <string name="forms_clear_body">Everything you filled in will be removed. Locked fields stay as they are. You can undo this.</string>
+    <string name="forms_clear_confirm">Clear form</string>
+    <string name="forms_clear_cancel">Cancel</string>
+</resources>

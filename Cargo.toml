@@ -1,0 +1,35 @@
+# Workspace root for the Android FFI build. Upstream pdfcraft is a pinned clone under
+# third_party/ (scripts/fetch-upstream.sh); its engine and render crates inherit from upstream's own
+# workspace, so this root only supplies what upstream's root supplies at workspace level:
+# [patch.crates-io] (rewritten to the clone's vendor/ paths) and [profile.release].
+[workspace]
+resolver = "3"
+members = ["rust/pdfa-ffi"]
+# Upstream is its own workspace (root Cargo.toml under third_party/); keep it out of this one so
+# its members inherit from its root, not ours.
+exclude = ["third_party"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = false
+# catch_unwind turns Rust panics into PdfError::Panic, so unwinding must stay enabled.
+panic = "unwind"
+
+# Vendored, patched third-party crates (see vendor/README.md). Each patch is meant to go upstream.
+[patch.crates-io]
+hayro-interpret = { path = "third_party/pdfcraft/vendor/hayro-interpret" }
+hayro = { path = "third_party/pdfcraft/vendor/hayro" }
+hayro-syntax = { path = "third_party/pdfcraft/vendor/hayro-syntax" }
+hayro-cmap = { path = "third_party/pdfcraft/vendor/hayro-cmap" }
+hayro-postscript = { path = "third_party/pdfcraft/vendor/hayro-postscript" }
+hayro-jbig2 = { path = "third_party/pdfcraft/vendor/hayro-jbig2" }
+lopdf = { path = "third_party/pdfcraft/vendor/lopdf" }
+vello_common = { path = "third_party/pdfcraft/vendor/vello_common" }
+vello_cpu = { path = "third_party/pdfcraft/vendor/vello_cpu" }

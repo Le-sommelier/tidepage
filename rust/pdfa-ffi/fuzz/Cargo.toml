@@ -1,0 +1,43 @@
+# cargo-fuzz crate for pdfa-ffi. Not a member of the main workspace. See README.md.
+[package]
+name = "pdfa-ffi-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pdfa-ffi = { path = ".." }
+
+[[bin]]
+name = "open"
+path = "fuzz_targets/open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "merge"
+path = "fuzz_targets/merge.rs"
+test = false
+doc = false
+bench = false
+
+# This crate is its own workspace root, so the [patch] below must be repeated here: a patch only
+# applies from the root being built. Keep it in step with the root Cargo.toml.
+[workspace]
+members = ["."]
+
+[patch.crates-io]
+hayro-interpret = { path = "../../../third_party/pdfcraft/vendor/hayro-interpret" }
+hayro = { path = "../../../third_party/pdfcraft/vendor/hayro" }
+hayro-syntax = { path = "../../../third_party/pdfcraft/vendor/hayro-syntax" }
+hayro-cmap = { path = "../../../third_party/pdfcraft/vendor/hayro-cmap" }
+hayro-postscript = { path = "../../../third_party/pdfcraft/vendor/hayro-postscript" }
+hayro-jbig2 = { path = "../../../third_party/pdfcraft/vendor/hayro-jbig2" }
+lopdf = { path = "../../../third_party/pdfcraft/vendor/lopdf" }
+vello_common = { path = "../../../third_party/pdfcraft/vendor/vello_common" }
+vello_cpu = { path = "../../../third_party/pdfcraft/vendor/vello_cpu" }

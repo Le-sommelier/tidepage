@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- No permissions, on purpose: the engine parses hostile files and must reach nothing. -->
+    <application>
+        <!-- Own process, isolated UID (no file, network or app-data access), never exported. -->
+        <service
+            android:name="app.pdfa.engine.service.EngineService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:process=":engine" />
+    </application>
+
+</manifest>

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="scan_title">Scan</string>
+    <string name="scan_close">Close</string>
+    <string name="scan_back">Back</string>
+    <string name="scan_done">Done</string>
+    <string name="scan_cancel">Cancel</string>
+    <string name="scan_dismiss">Dismiss</string>
+    <string name="scan_pick_images">Pick images instead</string>
+    <string name="scan_add_images">Add images</string>
+    <string name="scan_add_more">Scan more</string>
+
+    <!-- Camera -->
+    <string name="scan_camera_ask_title">Scan with your camera</string>
+    <string name="scan_camera_privacy">Camera is only used to scan. Nothing leaves your phone.</string>
+    <string name="scan_camera_allow">Allow camera</string>
+    <string name="scan_camera_denied_title">Camera is off</string>
+    <string name="scan_camera_denied_body">Without the camera you can not scan, but you can still make a PDF from pictures on your phone.</string>
+    <string name="scan_camera_try_again">Ask again</string>
+    <string name="scan_camera_open_settings">Open settings</string>
+    <string name="scan_camera_none_title">No camera found</string>
+    <string name="scan_camera_none_body">This device has no camera. You can make a PDF from pictures on your phone.</string>
+    <string name="scan_camera_error">The camera did not work. Try again.</string>
+    <string name="scan_preview_description">Camera preview</string>
+    <string name="scan_shutter">Take picture</string>
+    <string name="scan_shutter_wait">Camera is getting ready</string>
+
+    <!-- Capture strip -->
+    <string name="scan_pages_count">%1$d pages</string>
+    <string name="scan_strip_page">Page %1$d of %2$d. Tap to edit.</string>
+    <string name="scan_retaking">Retaking page %1$d</string>
+    <string name="scan_retake_cancel">Cancel retake</string>
+    <string name="scan_discard_title">Discard %1$d pages?</string>
+    <string name="scan_discard_body">The pages you scanned will be removed.</string>
+    <string name="scan_discard">Discard</string>
+    <string name="scan_keep">Keep scanning</string>
+
+    <!-- Page list -->
+    <string name="scan_review_title">Pages</string>
+    <string name="scan_review_empty">No pages yet. Scan one or add images.</string>
+    <string name="scan_page_label">Page %1$d of %2$d</string>
+    <string name="scan_page_edit">Edit page %1$d</string>
+    <string name="scan_move_earlier">Move page %1$d earlier</string>
+    <string name="scan_move_later">Move page %1$d later</string>
+    <string name="scan_retake">Retake page %1$d</string>
+    <string name="scan_delete">Delete page %1$d</string>
+    <string name="scan_skipped">%1$d pictures could not be added.</string>
+
+    <!-- Edit -->
+    <string name="scan_edit_title">Edit page %1$d</string>
+    <string name="scan_tab_crop">Crop</string>
+    <string name="scan_tab_look">Look</string>
+    <string name="scan_crop_apply">Apply crop</string>
+    <string name="scan_crop_whole">Whole picture</string>
+    <string name="scan_crop_hint">Drag the corners to the edges of the page.</string>
+    <string name="scan_crop_invalid">The corners do not outline a page.</string>
+    <string name="scan_corner_tl">Top left corner</string>
+    <string name="scan_corner_tr">Top right corner</string>
+    <string name="scan_corner_br">Bottom right corner</string>
+    <string name="scan_corner_bl">Bottom left corner</string>
+    <string name="scan_nudge_left">Move left</string>
+    <string name="scan_nudge_right">Move right</string>
+    <string name="scan_nudge_up">Move up</string>
+    <string name="scan_nudge_down">Move down</string>
+    <string name="scan_look_original">Original</string>
+    <string name="scan_look_colour">Colour</string>
+    <string name="scan_look_greyscale">Greyscale</string>
+    <string name="scan_look_bw">Black and white</string>
+    <string name="scan_look_group">Look</string>
+    <string name="scan_level">Cleanup strength</string>
+    <string name="scan_level_value">Level %1$d of %2$d</string>
+    <string name="scan_apply_all">Use this look on all pages</string>
+    <string name="scan_image_loading">Loading picture</string>
+    <string name="scan_image_description">Page picture</string>
+
+    <!-- Save -->
+    <string name="scan_save_title">Save as PDF</string>
+    <string name="scan_save_name">File name</string>
+    <string name="scan_save">Save</string>
+    <string name="scan_working">Working</string>
+</resources>

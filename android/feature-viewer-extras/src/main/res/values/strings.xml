@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="search_field_label">Search in document</string>
+    <string name="search_previous">Previous match</string>
+    <string name="search_next">Next match</string>
+    <string name="search_close">Close search</string>
+    <string name="search_case_sensitive">Match case</string>
+    <string name="search_whole_word">Whole words</string>
+    <string name="search_counter">%1$d of %2$d</string>
+    <string name="search_counter_truncated">%1$d of more than %2$d</string>
+    <plurals name="search_counter_total">
+        <item quantity="one">%1$d match</item>
+        <item quantity="other">%1$d matches</item>
+    </plurals>
+    <string name="search_no_matches">No matches</string>
+    <string name="search_scanning">Searching page %1$d of %2$d</string>
+    <string name="search_failed">Search stopped. The document engine restarted.</string>
+    <string name="search_retry">Retry</string>
+    <string name="outline_title">Contents</string>
+    <string name="outline_expand">Expand</string>
+    <string name="outline_collapse">Collapse</string>
+    <string name="outline_no_page">No page</string>
+    <string name="outline_empty">This document has no contents</string>
+    <string name="outline_failed">Contents could not be read</string>
+    <string name="outline_page_label">Page %1$d</string>
+    <string name="thumbnail_page">Page %1$d of %2$d</string>
+    <string name="thumbnail_failed">Preview failed</string>
+    <string name="thumbnail_retry">Retry preview</string>
+    <string name="selection_copy">Copy</string>
+    <string name="selection_copy_forbidden">This file does not allow copying text.</string>
+    <string name="selection_copy_failed">The text could not be copied.</string>
+    <string name="selection_truncated">The selection is very long. Only the first part is copied.</string>
+    <string name="selection_failed">Text could not be selected.</string>
+    <string name="link_dialog_title">Open this link?</string>
+    <string name="link_dialog_body">The link goes to a web page outside this app. Nothing opens until you confirm.</string>
+    <string name="link_dialog_open">Open</string>
+    <string name="link_dialog_cancel">Cancel</string>
+</resources>

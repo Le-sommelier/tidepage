@@ -1,0 +1,42 @@
+[package]
+name = "pdfa-ffi"
+description = "UniFFI wrapper over pdfcraft-engine for the Tidepage Android app"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "pdfa_ffi"
+crate-type = ["cdylib", "lib"]
+
+# The bindgen binary needs uniffi's `cli` feature; enable it with `--features cli`.
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+cli = ["uniffi/cli"]
+# Engine features, all OFF for the Android build (see docs/size-report.md). Turn one on with e.g.
+# `--features js` for host tests that need it.
+sign  = ["pdfcraft-engine/sign"]
+ocr   = ["pdfcraft-engine/ocr"]
+print = ["pdfcraft-engine/print"]
+js    = ["pdfcraft-engine/js"]
+# Off until upstream bugs #774/#836 are verified fixed (see docs/contract/CONTRACT.md rule 6).
+encrypt = []
+
+[dependencies]
+# Path into the pinned upstream clone (scripts/fetch-upstream.sh). Upstream's own workspace
+# supplies the engine's inherited versions, lints and features; this root supplies [patch] and [profile].
+pdfcraft-engine = { path = "../../third_party/pdfcraft/crates/engine", default-features = false }
+pdfcraft-render = { path = "../../third_party/pdfcraft/crates/render" }
+pdfcraft-annot = { path = "../../third_party/pdfcraft/crates/annot" }
+pdfcraft-forms = { path = "../../third_party/pdfcraft/crates/forms" }
+pdfcraft-organize = { path = "../../third_party/pdfcraft/crates/organize" }
+pdfcraft-create = { path = "../../third_party/pdfcraft/crates/create" }
+pdfcraft-cos = { path = "../../third_party/pdfcraft/crates/cos" }
+pdfcraft-geom = { path = "../../third_party/pdfcraft/crates/geom" }
+uniffi = "0.32.2"
+zeroize = "1"

@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pdfa prototype</title>
+<style>
+:root{--canvas:#FFFFFF;--surface:#F4F7F7;--surfaceHigh:#E8EEEE;--ink:#14201F;--inkMuted:#4A5958;--outline:#829291;--hairline:#DCE4E3;--accent:#0B6E6B;--onAccent:#FFFFFF;--accentContainer:#E0F2F1;--onAccentContainer:#064B49;--danger:#B3261E;--highlight:#FFF3B0;--scrim:rgba(20,32,31,.4);--stage:#CBD5D4;--sheet:#FFFFFF}
+[data-theme=dark]{--canvas:#0F1514;--surface:#1A2322;--surfaceHigh:#243130;--ink:#E6EDEC;--inkMuted:#A9B8B7;--outline:#6F8180;--hairline:#2E3C3B;--accent:#5CCFC9;--onAccent:#00201F;--accentContainer:#12302F;--onAccentContainer:#9FE8E3;--danger:#FFB4AB;--highlight:#6B5200;--scrim:rgba(0,0,0,.65);--stage:#050808}
+*{box-sizing:border-box;margin:0}
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--stage);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;color:var(--ink)}
+.bar{display:flex;gap:8px;align-items:center;font-size:13px}
+.bar button{border:1px solid var(--outline);background:var(--canvas);color:var(--ink);border-radius:999px;padding:6px 14px;cursor:pointer;font:inherit}
+#phone{position:relative;width:360px;height:780px;background:var(--canvas);border-radius:28px;overflow:hidden;border:6px solid #111;box-shadow:0 12px 40px rgba(0,0,0,.3);font-size:16px}
+.screen{position:absolute;inset:0;display:none;flex-direction:column;background:var(--canvas)}
+.screen.on{display:flex}
+.top{height:64px;flex:none;display:flex;align-items:center;gap:4px;padding:0 8px 0 4px}
+.top h1{font-size:22px;line-height:28px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:8px}
+.top h2{font-size:16px;font-weight:600;flex:1;padding-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib{width:48px;height:48px;border:0;background:none;color:var(--ink);border-radius:999px;display:grid;place-items:center;cursor:pointer;flex:none}
+.ib:hover{background:var(--surface)}.ib:disabled{opacity:.35;cursor:default}
+.ib svg,.tool svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn{height:48px;border-radius:999px;border:0;background:var(--accent);color:var(--onAccent);font:500 14px system-ui;padding:0 24px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.btn.tonal{background:var(--accentContainer);color:var(--onAccentContainer)}
+.btn.text{background:none;color:var(--accent);padding:0 12px}
+.btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.body{flex:1;overflow:auto;position:relative}
+.cap{font-size:12px;line-height:16px;font-weight:500;letter-spacing:.4px;color:var(--inkMuted);padding:16px 16px 8px}
+.row{display:flex;align-items:center;gap:12px;padding:8px 16px;min-height:72px;width:100%;border:0;background:none;color:var(--ink);text-align:left;cursor:pointer;font:inherit}
+.row:hover{background:var(--surface)}
+.thumb{width:44px;height:58px;background:#fff;border:1px solid var(--hairline);border-radius:4px;flex:none;padding:6px 5px;display:flex;flex-direction:column;gap:3px}
+.thumb i{display:block;height:2px;background:#C9D3D2;border-radius:1px}.thumb i:first-child{background:var(--accent);width:60%}
+.row b{display:block;font-size:16px;font-weight:500}.row small{font-size:14px;color:var(--inkMuted)}
+.fab{position:absolute;right:16px;bottom:16px;height:56px;border-radius:16px;border:0;background:var(--accent);color:var(--onAccent);padding:0 20px;display:flex;align-items:center;gap:8px;font:500 14px system-ui;cursor:pointer;box-shadow:0 3px 8px rgba(0,0,0,.25)}
+.fab svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round}
+.speed{position:absolute;right:16px;bottom:84px;display:none;flex-direction:column;gap:8px;align-items:flex-end}.speed.on{display:flex}
+.speed .btn{box-shadow:0 3px 8px rgba(0,0,0,.2)}
+.privacy{padding:16px;font-size:12px;color:var(--inkMuted);text-align:center}
+/* viewer */
+.read{background:var(--surface);flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px;position:relative}
+.page{background:#fff;border-radius:2px;box-shadow:0 1px 3px rgba(0,0,0,.18);padding:22px 20px;flex:none;height:440px;position:relative;color:#14201F}
+.page h3{font-size:15px;margin-bottom:12px}.page i{display:block;height:5px;background:#D6DEDD;border-radius:2px;margin-bottom:9px}
+.page .hl{background:#FFF3B0;height:9px;margin-bottom:5px;opacity:.95}
+.badge{position:absolute;right:12px;top:80px;background:var(--ink);color:var(--canvas);border-radius:999px;font-size:12px;padding:4px 10px}
+.tray{height:72px;flex:none;background:var(--surface);border-top:1px solid var(--hairline);display:flex;justify-content:space-around;align-items:center;padding:0 4px}
+.tool{width:60px;height:56px;border:0;background:none;color:var(--inkMuted);border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font:500 12px system-ui;cursor:pointer}
+.tool.act{color:var(--onAccentContainer);background:var(--accentContainer)}
+.annot{position:absolute;left:12px;right:12px;bottom:84px;background:var(--canvas);border:1px solid var(--hairline);border-radius:28px;box-shadow:0 3px 10px rgba(0,0,0,.2);height:56px;display:none;align-items:center;justify-content:space-around;padding:0 4px;z-index:4}
+.annot.on{display:flex}
+.annot .ib{width:44px;height:44px}.annot .sel{background:var(--accentContainer);color:var(--onAccentContainer)}
+.dot{width:24px;height:24px;border-radius:999px;border:2px solid var(--canvas);outline:1px solid var(--outline);cursor:pointer;padding:0}
+.dot.sel{outline:2px solid var(--accent)}
+.stroke{position:absolute;left:30px;top:200px;width:200px;height:60px;pointer-events:none}
+/* grid */
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:16px;overflow:auto;flex:1;align-content:start}
+.cell{border:2px solid transparent;border-radius:8px;background:none;padding:4px;cursor:pointer;color:var(--ink);font:500 12px system-ui;position:relative}
+.cell .pg{background:#fff;border:1px solid var(--hairline);border-radius:4px;aspect-ratio:3/4;padding:8px 7px;display:flex;flex-direction:column;gap:4px;transition:transform .15s cubic-bezier(.2,0,0,1)}
+.cell .pg i{height:3px;background:#C9D3D2;border-radius:2px;display:block}.cell .pg i:first-child{background:var(--accent);width:55%}
+.cell span{display:block;margin-top:4px}
+.cell.sel{border-color:var(--accent);background:var(--accentContainer)}
+.cell .chk{position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:999px;background:var(--accent);color:var(--onAccent);display:none;place-items:center}
+.cell.sel .chk{display:grid}.chk svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.5}
+.ctx{height:72px;flex:none;background:var(--surface);border-top:1px solid var(--hairline);display:flex;justify-content:space-around;align-items:center}
+/* merge */
+.mi{display:flex;align-items:center;gap:8px;margin:0 16px 8px;padding:8px 8px 8px 12px;border:1px solid var(--hairline);border-radius:12px;background:var(--canvas)}
+.mi .n{width:24px;height:24px;border-radius:999px;background:var(--accentContainer);color:var(--onAccentContainer);font:600 12px system-ui;display:grid;place-items:center;flex:none}
+.mi div{flex:1;min-width:0}.mi b{display:block;font-size:16px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mi small{font-size:14px;color:var(--inkMuted)}
+.foot{padding:12px 16px 16px;border-top:1px solid var(--hairline);display:flex;gap:12px;align-items:center;flex:none}.foot .btn{flex:1;justify-content:center}
+.progress{height:4px;background:var(--surfaceHigh);border-radius:2px;overflow:hidden;margin:0 16px 12px;display:none}.progress.on{display:block}.progress div{height:100%;width:0;background:var(--accent)}
+/* scan */
+.cam{flex:1;background:#1c2423;position:relative;display:grid;place-items:center;color:#cfd8d7;font-size:14px}
+.doc{width:210px;height:290px;background:#e9eceb;transform:rotate(-3deg);border-radius:2px;position:relative;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.doc:after{content:"";position:absolute;inset:-6px;border:2px solid #5CCFC9;border-radius:6px}
+.cam p{position:absolute;top:16px;left:0;right:0;text-align:center}
+.shut{display:flex;align-items:center;justify-content:space-around;height:120px;background:#0F1514;flex:none;color:#E6EDEC}
+.shutter{width:72px;height:72px;border-radius:999px;border:4px solid #E6EDEC;background:#5CCFC9;cursor:pointer;outline-offset:4px}
+.strip{width:56px;height:72px;background:#fff;border-radius:6px;display:grid;place-items:center;color:#14201F;font:600 18px system-ui;border:2px solid #5CCFC9}
+.shut .btn{background:#5CCFC9;color:#00201F}
+/* overlays */
+.scrim{position:absolute;inset:0;background:var(--scrim);display:none;z-index:8;align-items:center;justify-content:center}.scrim.on{display:flex}
+.dlg{width:304px;background:var(--sheet);border-radius:28px;padding:24px;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+.dlg h2{font-size:22px;line-height:28px;font-weight:600;margin-bottom:8px}.dlg p{font-size:14px;line-height:20px;color:var(--inkMuted);margin-bottom:16px}
+.dlg label{display:block;font-size:12px;font-weight:500;color:var(--inkMuted);margin-bottom:4px}
+.dlg input[type=password],.dlg input[type=text]{width:100%;height:48px;border:1px solid var(--outline);border-radius:8px;background:var(--canvas);color:var(--ink);font:16px system-ui;padding:0 12px;margin-bottom:12px}
+.dlg input:focus{outline:2px solid var(--accent);border-color:var(--accent)}
+.chkrow{display:flex;gap:8px;align-items:center;font-size:14px;margin-bottom:12px;min-height:48px}.chkrow input{width:20px;height:20px;accent-color:var(--accent)}
+.acts{display:flex;justify-content:flex-end;gap:8px}
+.warn{font-size:12px;color:var(--danger);min-height:16px;margin:-6px 0 8px}
+.snack{position:absolute;left:12px;right:12px;bottom:16px;min-height:48px;background:var(--ink);color:var(--canvas);border-radius:8px;display:none;align-items:center;padding:0 4px 0 16px;gap:8px;font-size:14px;z-index:9;box-shadow:0 3px 8px rgba(0,0,0,.3)}
+.snack.on{display:flex}.snack span{flex:1}.snack button{border:0;background:none;color:#5CCFC9;font:600 14px system-ui;height:48px;padding:0 12px;cursor:pointer}
+[data-theme=dark] .snack button{color:#0B6E6B}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head>
+<body>
+<div class="bar"><span>pdfa prototype</span><button id="theme" aria-label="Toggle light and dark theme">Dark mode</button>
+<button data-go="home">Home</button><button data-go="viewer">Viewer</button><button data-go="organizer">Organizer</button><button data-go="merge">Merge</button><button data-go="scan">Scan</button></div>
+
+<div id="phone" data-theme="light">
+
+<!-- HOME -->
+<section class="screen on" id="home" aria-label="Home">
+  <div class="top"><h1>Recent</h1><button class="ib" aria-label="Search files" data-toast="Search recents"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button><button class="ib" aria-label="Settings" data-toast="Settings: theme, default zoom, licences"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></div>
+  <div class="body">
+    <div class="cap">TODAY</div>
+    <button class="row" data-go="viewer"><div class="thumb"><i></i><i></i><i></i><i></i></div><div><b>Lease agreement.pdf</b><small>12 pages · 10:42</small></div></button>
+    <button class="row" data-go="viewer"><div class="thumb"><i></i><i></i><i></i><i></i></div><div><b>Boarding pass.pdf</b><small>1 page · 08:15</small></div></button>
+    <div class="cap">EARLIER</div>
+    <button class="row" data-go="viewer"><div class="thumb"><i></i><i></i><i></i><i></i></div><div><b>Tax summary 2025.pdf</b><small>8 pages · Yesterday</small></div></button>
+    <button class="row" data-go="viewer"><div class="thumb"><i></i><i></i><i></i><i></i></div><div><b>User manual.pdf</b><small>212 pages · Mon</small></div></button>
+    <p class="privacy">Works offline. No account. Nothing leaves your phone.</p>
+  </div>
+  <div class="speed" id="speed">
+    <button class="btn tonal" data-go="scan"><svg viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></svg>Scan</button>
+    <button class="btn tonal" data-toast="Pick images to make a PDF"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>Images to PDF</button>
+    <button class="btn tonal" data-go="merge"><svg viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>Merge</button>
+  </div>
+  <button class="fab" id="fab" aria-label="Create or open" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Open PDF</button>
+</section>
+
+<!-- VIEWER -->
+<section class="screen" id="viewer" aria-label="Viewer">
+  <div class="top"><button class="ib" aria-label="Back" data-go="home"><svg viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button><h2>Lease agreement.pdf</h2>
+    <button class="ib" aria-label="Search in document" data-toast="Search: type to find text"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></button>
+    <button class="ib" aria-label="Bookmark this page" id="bm"><svg viewBox="0 0 24 24"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button></div>
+  <div class="read" id="read">
+    <div class="page"><h3>1. Parties and premises</h3><i></i><i style="width:92%"></i><i></i><div class="hl" style="width:70%"></div><i style="width:84%"></i><i></i><i style="width:60%"></i><i></i><i style="width:90%"></i><i></i><i style="width:75%"></i>
+      <svg class="stroke" id="stroke" viewBox="0 0 200 60" style="display:none"><path d="M5 40 C 40 0, 70 60, 110 25 S 170 10, 195 30" fill="none" stroke="#B3261E" stroke-width="3" stroke-linecap="round"/></svg></div>
+    <div class="page"><h3>2. Term and rent</h3><i></i><i style="width:88%"></i><i></i><i style="width:95%"></i><i style="width:70%"></i><i></i><i style="width:82%"></i><i></i><i style="width:64%"></i></div>
+    <div class="badge">1 / 12</div>
+  </div>
+  <div class="annot" id="annot" role="toolbar" aria-label="Annotation tools">
+    <button class="ib sel" aria-label="Pen" data-tool="pen"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
+    <button class="ib" aria-label="Highlighter" data-tool="hl"><svg viewBox="0 0 24 24"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg></button>
+    <button class="ib" aria-label="Text note" data-tool="txt"><svg viewBox="0 0 24 24"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg></button>
+    <button class="dot sel" style="background:#B3261E" aria-label="Red ink"></button><button class="dot" style="background:#1F5FBF" aria-label="Blue ink"></button><button class="dot" style="background:#14201F" aria-label="Black ink"></button>
+    <button class="ib" aria-label="Undo" data-toast="Stroke undone" id="aundo"><svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+    <button class="ib" aria-label="Done annotating" id="adone"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></button>
+  </div>
+  <div class="tray" id="tray">
+    <button class="tool" data-go="organizer"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>Pages</button>
+    <button class="tool" id="t-annot"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Annotate</button>
+    <button class="tool" data-toast="Form fields highlighted. Tap one to fill."><svg viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>Forms</button>
+    <button class="tool" data-open="protect"><svg viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Protect</button>
+    <button class="tool" data-go="merge"><svg viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>Merge</button>
+  </div>
+</section>
+
+<!-- ORGANIZER -->
+<section class="screen" id="organizer" aria-label="Page organizer">
+  <div class="top"><button class="ib" aria-label="Back to viewer" data-go="viewer"><svg viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button><h2 id="orgTitle">Pages</h2>
+    <button class="ib" id="oundo" aria-label="Undo" disabled><svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+    <button class="ib" id="oredo" aria-label="Redo" disabled><svg viewBox="0 0 24 24" style="transform:scaleX(-1)"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+    <button class="btn text" data-go="viewer">Done</button></div>
+  <div class="grid" id="grid"></div>
+  <div class="ctx" id="ctx">
+    <button class="tool" id="o-rot"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>Rotate</button>
+    <button class="tool" id="o-del"><svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete</button>
+    <button class="tool" id="o-early"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Earlier</button>
+    <button class="tool" id="o-late"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>Later</button>
+    <button class="tool" data-toast="Insert blank page or pages from another PDF"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Insert</button>
+  </div>
+</section>
+
+<!-- MERGE -->
+<section class="screen" id="merge" aria-label="Merge">
+  <div class="top"><button class="ib" aria-label="Back" data-go="home"><svg viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button><h2>Merge PDFs</h2><button class="btn text" data-toast="Split and Extract live in the same tool">Split</button></div>
+  <div class="cap">ORDER OF FILES</div>
+  <div class="body" id="mlist"></div>
+  <div class="progress" id="mprog"><div></div></div>
+  <div class="foot"><button class="btn tonal" data-toast="Pick another file"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg>Add</button><button class="btn" id="mgo">Merge 3 files</button></div>
+</section>
+
+<!-- SCAN -->
+<section class="screen" id="scan" aria-label="Scan">
+  <div class="cam"><p>Hold steady. Edges found.</p><div class="doc"></div>
+    <button class="ib" aria-label="Close scanner" data-go="home" style="position:absolute;left:8px;top:8px;color:#E6EDEC"><svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></div>
+  <div class="shut"><div class="strip" id="strip" aria-label="Pages scanned">0</div><button class="shutter" id="shutter" aria-label="Capture page"></button><button class="btn" id="sdone">Done</button></div>
+</section>
+
+<!-- Protect dialog -->
+<div class="scrim" id="protect" role="dialog" aria-modal="true" aria-labelledby="ptitle">
+  <div class="dlg"><h2 id="ptitle">Protect with password</h2><p>Anyone opening this file will need the password. We cannot recover it.</p>
+    <label for="pw1">Password</label><input id="pw1" type="password" autocomplete="off">
+    <label for="pw2">Confirm password</label><input id="pw2" type="password" autocomplete="off">
+    <div class="warn" id="pwwarn" role="alert"></div>
+    <label class="chkrow"><input type="checkbox" id="pwshow"> Show password</label>
+    <div class="acts"><button class="btn text" data-close="protect">Cancel</button><button class="btn" id="psave">Save copy</button></div></div>
+</div>
+
+<div class="snack" id="snack" role="status" aria-live="polite"><span id="snackMsg"></span><button id="snackAct" style="display:none">Undo</button></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var phone=document.getElementById('phone');
+var snack=document.getElementById('snack'),snackMsg=document.getElementById('snackMsg'),snackAct=document.getElementById('snackAct'),snackTimer=null,snackFn=null;
+function toast(msg,actLabel,fn){
+  snackMsg.textContent=msg;snackFn=fn||null;
+  snackAct.style.display=fn?'inline-block':'none';
+  if(fn)snackAct.textContent=actLabel||'Undo';
+  snack.classList.add('on');clearTimeout(snackTimer);
+  snackTimer=setTimeout(function(){snack.classList.remove('on');},fn?8000:3000);
+}
+snackAct.addEventListener('click',function(){var f=snackFn;snack.classList.remove('on');if(f)f();});
+function go(id){
+  var s=document.querySelectorAll('.screen'),i,found=false;
+  for(i=0;i<s.length;i++){if(s[i].id===id)found=true;}
+  if(!found)return;
+  for(i=0;i<s.length;i++){s[i].classList.toggle('on',s[i].id===id);}
+  document.getElementById('protect').classList.remove('on');
+  snack.classList.remove('on');
+  if(id==='organizer')renderGrid();
+  if(id==='merge')renderMerge();
+  if(id==='scan'){scanCount=0;document.getElementById('strip').textContent='0';}
+  if(id!=='viewer')closeAnnot();
+}
+document.addEventListener('click',function(e){
+  var t=e.target.closest('[data-go]');if(t){go(t.getAttribute('data-go'));return;}
+  t=e.target.closest('[data-toast]');if(t){toast(t.getAttribute('data-toast'));return;}
+  t=e.target.closest('[data-open]');if(t){document.getElementById(t.getAttribute('data-open')).classList.add('on');var p=document.getElementById('pw1');if(p)p.focus();return;}
+  t=e.target.closest('[data-close]');if(t){document.getElementById(t.getAttribute('data-close')).classList.remove('on');return;}
+});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')document.getElementById('protect').classList.remove('on');});
+
+/* theme */
+var themeBtn=document.getElementById('theme');
+themeBtn.addEventListener('click',function(){
+  var dark=phone.getAttribute('data-theme')==='light';
+  phone.setAttribute('data-theme',dark?'dark':'light');
+  document.documentElement.setAttribute('data-theme',dark?'dark':'light');
+  themeBtn.textContent=dark?'Light mode':'Dark mode';
+});
+document.documentElement.setAttribute('data-theme','light');
+
+/* home fab */
+var fab=document.getElementById('fab'),speed=document.getElementById('speed');
+fab.addEventListener('click',function(){var on=speed.classList.toggle('on');fab.setAttribute('aria-expanded',on);if(on)toast('Choose a file in the system picker, or pick a tool');});
+
+/* viewer */
+var bm=document.getElementById('bm'),bmOn=false;
+bm.addEventListener('click',function(){bmOn=!bmOn;bm.querySelector('svg').style.fill=bmOn?'currentColor':'none';bm.style.color=bmOn?'var(--accent)':'';toast(bmOn?'Bookmarked page 1':'Bookmark removed');});
+var annot=document.getElementById('annot'),tAnnot=document.getElementById('t-annot'),stroke=document.getElementById('stroke');
+function closeAnnot(){annot.classList.remove('on');tAnnot.classList.remove('act');}
+tAnnot.addEventListener('click',function(){var on=annot.classList.toggle('on');tAnnot.classList.toggle('act',on);});
+document.getElementById('adone').addEventListener('click',function(){closeAnnot();toast('Annotations saved');});
+document.getElementById('aundo').addEventListener('click',function(){stroke.style.display='none';});
+var tools=annot.querySelectorAll('[data-tool]');
+Array.prototype.forEach.call(tools,function(b){b.addEventListener('click',function(){
+  Array.prototype.forEach.call(tools,function(x){x.classList.remove('sel');});b.classList.add('sel');
+  if(b.getAttribute('data-tool')==='pen'){stroke.style.display='block';}
+  if(b.getAttribute('data-tool')==='txt'){toast('Tap the page to place a note');}
+});});
+Array.prototype.forEach.call(annot.querySelectorAll('.dot'),function(d){d.addEventListener('click',function(){
+  Array.prototype.forEach.call(annot.querySelectorAll('.dot'),function(x){x.classList.remove('sel');});d.classList.add('sel');
+  stroke.querySelector('path').setAttribute('stroke',d.style.backgroundColor);});});
+var read=document.getElementById('read'),badge=read.querySelector('.badge');
+read.addEventListener('scroll',function(){badge.textContent=(read.scrollTop>230?2:1)+' / 12';badge.style.top=(80+read.scrollTop)+'px';});
+
+/* organizer */
+var pages,sel,hist,redo;
+function resetOrg(){pages=[1,2,3,4,5,6,7,8,9].map(function(n){return {n:n,rot:0};});sel={};hist=[];redo=[];}
+resetOrg();
+function snapshot(){return JSON.stringify(pages);}
+function pushHist(){hist.push(snapshot());redo=[];}
+function selCount(){return Object.keys(sel).length;}
+function renderGrid(){
+  var g=document.getElementById('grid');g.innerHTML='';
+  pages.forEach(function(p,idx){
+    var b=document.createElement('button');b.className='cell'+(sel[p.n]?' sel':'');
+    b.setAttribute('aria-label','Page '+(idx+1)+(sel[p.n]?', selected':''));b.setAttribute('aria-pressed',!!sel[p.n]);
+    b.innerHTML='<div class="pg" style="transform:rotate('+p.rot+'deg)"><i></i><i></i><i></i><i></i><i></i><i></i></div><span>'+(idx+1)+'</span><div class="chk"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>';
+    b.addEventListener('click',function(){if(sel[p.n])delete sel[p.n];else sel[p.n]=true;renderGrid();});
+    g.appendChild(b);
+  });
+  var c=selCount();
+  document.getElementById('orgTitle').textContent=c?c+' selected':'Pages';
+  document.getElementById('oundo').disabled=!hist.length;
+  document.getElementById('oredo').disabled=!redo.length;
+  ['o-rot','o-del','o-early','o-late'].forEach(function(id){document.getElementById(id).disabled=!c;document.getElementById(id).style.opacity=c?1:.4;});
+}
+function restore(js){pages=JSON.parse(js);sel={};renderGrid();}
+document.getElementById('o-rot').addEventListener('click',function(){if(!selCount())return;pushHist();pages.forEach(function(p){if(sel[p.n])p.rot=(p.rot+90)%360;});renderGrid();});
+document.getElementById('o-del').addEventListener('click',function(){
+  var c=selCount();if(!c)return;pushHist();
+  pages=pages.filter(function(p){return !sel[p.n];});sel={};renderGrid();
+  toast(c+(c>1?' pages':' page')+' deleted','Undo',function(){undo();});
+});
+function move(dir){
+  if(!selCount())return;pushHist();var a=pages.slice(),i;
+  if(dir<0){for(i=1;i<a.length;i++){if(sel[a[i].n]&&!sel[a[i-1].n]){var t=a[i];a[i]=a[i-1];a[i-1]=t;}}}
+  else{for(i=a.length-2;i>=0;i--){if(sel[a[i].n]&&!sel[a[i+1].n]){var u=a[i];a[i]=a[i+1];a[i+1]=u;}}}
+  pages=a;renderGrid();
+}
+document.getElementById('o-early').addEventListener('click',function(){move(-1);});
+document.getElementById('o-late').addEventListener('click',function(){move(1);});
+function undo(){if(!hist.length)return;redo.push(snapshot());pages=JSON.parse(hist.pop());sel={};renderGrid();}
+document.getElementById('oundo').addEventListener('click',undo);
+document.getElementById('oredo').addEventListener('click',function(){if(!redo.length)return;hist.push(snapshot());pages=JSON.parse(redo.pop());sel={};renderGrid();});
+
+/* merge */
+var files=[{n:'Lease agreement.pdf',p:'12 pages'},{n:'Tax summary 2025.pdf',p:'8 pages'},{n:'Boarding pass.pdf',p:'1 page'}];
+function renderMerge(){
+  var l=document.getElementById('mlist');l.innerHTML='';
+  files.forEach(function(f,i){
+    var d=document.createElement('div');d.className='mi';
+    d.innerHTML='<span class="n">'+(i+1)+'</span><div><b></b><small></small></div>'+
+    '<button class="ib" aria-label="Move up"><svg viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></svg></button><button class="ib" aria-label="Move down"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>';
+    d.querySelector('b').textContent=f.n;d.querySelector('small').textContent=f.p+' · all pages';
+    var bs=d.querySelectorAll('button');
+    bs[0].disabled=i===0;bs[1].disabled=i===files.length-1;
+    bs[0].addEventListener('click',function(){var t=files[i];files[i]=files[i-1];files[i-1]=t;renderMerge();});
+    bs[1].addEventListener('click',function(){var t=files[i];files[i]=files[i+1];files[i+1]=t;renderMerge();});
+    l.appendChild(d);
+  });
+}
+var mgo=document.getElementById('mgo'),mprog=document.getElementById('mprog'),mbar=mprog.firstElementChild,mtimer=null;
+mgo.addEventListener('click',function(){
+  if(mtimer){clearInterval(mtimer);mtimer=null;mprog.classList.remove('on');mgo.textContent='Merge 3 files';toast('Merge cancelled');return;}
+  var v=0;mprog.classList.add('on');mgo.textContent='Cancel';mbar.style.width='0';
+  mtimer=setInterval(function(){
+    v+=8;mbar.style.width=Math.min(v,100)+'%';
+    if(v>=100){clearInterval(mtimer);mtimer=null;mprog.classList.remove('on');mgo.textContent='Merge 3 files';go('viewer');toast('Saved as Merged.pdf','Open',function(){});}
+  },120);
+});
+
+/* scan */
+var scanCount=0;
+document.getElementById('shutter').addEventListener('click',function(){scanCount++;document.getElementById('strip').textContent=String(scanCount);});
+document.getElementById('sdone').addEventListener('click',function(){
+  if(!scanCount){toast('Capture a page first');return;}
+  var n=scanCount;go('viewer');toast('Scan saved: '+n+(n>1?' pages':' page'));
+});
+
+/* protect */
+var pw1=document.getElementById('pw1'),pw2=document.getElementById('pw2'),warn=document.getElementById('pwwarn');
+document.getElementById('pwshow').addEventListener('change',function(e){var t=e.target.checked?'text':'password';pw1.type=t;pw2.type=t;});
+document.getElementById('psave').addEventListener('click',function(){
+  if(pw1.value.length<4){warn.textContent='Use at least 4 characters.';return;}
+  if(pw1.value!==pw2.value){warn.textContent='Passwords do not match.';return;}
+  warn.textContent='';pw1.value='';pw2.value='';
+  document.getElementById('protect').classList.remove('on');
+  toast('Protected copy saved','Open',function(){});
+});
+})();
+</script>
+</body></html>

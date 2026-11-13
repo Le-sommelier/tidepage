@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tidepage mark: a page with a folded corner and the tide rising on it (108 dp adaptive canvas; the
+  page fits the 66 dp safe circle). Source drawing: docs/design/icon/tidepage-icon.svg.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,28H64L74,38V76a4,4 0,0 1,-4,4H38a4,4 0,0 1,-4,-4V32a4,4 0,0 1,4,-4z" />
+    <path
+        android:fillColor="#9FE8E3"
+        android:pathData="M64,28V35a3,3 0,0 0,3,3H74z" />
+    <path
+        android:fillColor="#5CCFC9"
+        android:pathData="M34,62C40.7,56.5 47.3,56.5 54,62C60.7,67.5 67.3,67.5 74,62V76a4,4 0,0 1,-4,4H38a4,4 0,0 1,-4,-4z" />
+    <path
+        android:fillColor="#12908B"
+        android:pathData="M34,70.5C40.7,66 47.3,66 54,70.5C60.7,75 67.3,75 74,70.5V76a4,4 0,0 1,-4,4H38a4,4 0,0 1,-4,-4z" />
+</vector>
